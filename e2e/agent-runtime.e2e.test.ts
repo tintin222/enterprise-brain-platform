@@ -31,6 +31,7 @@ describe('agent runtime', () => {
   });
 
   afterAll(async () => {
+    await stack?.archiveCreatedChannels();
     await runtime?.stop();
     await bridge?.stop();
     await stack?.close();

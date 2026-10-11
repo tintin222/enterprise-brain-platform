@@ -56,6 +56,7 @@ export class Stack {
   readonly identities: IdentityRepository;
   readonly env: Record<string, string | undefined>;
   #teamId: string | undefined;
+  readonly #created: string[] = [];
 
   constructor(overrides: Record<string, string> = {}) {
     loadDotEnv();
@@ -91,8 +92,37 @@ export class Stack {
   async createChannel(owner: MmSession, type: 'O' | 'P', label: string, members: string[] = []): Promise<{ id: string; name: string }> {
     const name = uniqueName(label);
     const channel = await owner.api.post<{ id: string; name: string }>('/channels', { team_id: await this.teamId(), name, display_name: name, type });
+    this.#created.push(channel.id);
     for (const userId of members) await owner.api.post(`/channels/${channel.id}/members`, { user_id: userId });
     return channel;
+  }
+
+  /** Archive the channels this Stack created, so test runs do not pile up active channels. */
+  async archiveCreatedChannels(): Promise<void> {
+    const admin = await this.login(this.env.MM_ADMIN_USERNAME ?? '');
+    for (const id of this.#created.splice(0)) await admin.api.delete(`/channels/${id}`).catch(() => undefined);
+  }
+
+  /** Upload a file to a channel as `session`; returns its file id. */
+  async uploadFile(session: MmSession, channelId: string, name: string, content: string): Promise<string> {
+    const form = new FormData();
+    form.append('channel_id', channelId);
+    form.append('files', new Blob([content]), name);
+    const response = await fetch(`${this.config.MM_URL}/api/v4/files`, { method: 'POST', headers: { Authorization: `Bearer ${session.api.token ?? ''}` }, body: form });
+    if (!response.ok) throw new Error(`File upload failed: ${response.status}`);
+    return ((await response.json()) as { file_infos: { id: string }[] }).file_infos[0]!.id;
+  }
+
+  /** Pubkeys in a mirrored channel's relay member list (kind 39002), read as the channel owner. */
+  async relayMembers(mmChannelId: string): Promise<Set<string>> {
+    const [list] = await this.relay.query([{ kinds: [39002], '#d': [relayChannelIdFor(mmChannelId)], limit: 1 }], this.bridgeSigner);
+    return new Set(list ? list.tags.filter((tag) => tag[0] === 'p').map((tag) => tag[1]!) : []);
+  }
+
+  /** A mirrored channel's relay metadata (kind 39000), read as the channel owner. */
+  async relayMetadata(mmChannelId: string): Promise<NostrEvent | undefined> {
+    const [metadata] = await this.relay.query([{ kinds: [39000], '#d': [relayChannelIdFor(mmChannelId)], limit: 1 }], this.bridgeSigner);
+    return metadata;
   }
 
   /** Add @brain to a channel and wait until the bridge has enabled it. */

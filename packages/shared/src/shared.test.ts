@@ -5,7 +5,7 @@ import { CoalescedTask, KeyedQueue, retry } from './async.ts';
 import { ConfigError, parseConfig } from './config.ts';
 import type { Queryable } from './db.ts';
 import { KeyStore, KeyStoreError } from './key-store.ts';
-import { relayChannelIdFor, replyTarget, threadRoot, uuidv5 } from './nostr.ts';
+import { applyEdits, DistinctSigner, generateSecretKeyBytes, relayChannelIdFor, replyTarget, SecretKeySigner, threadRoot, uuidv5 } from './nostr.ts';
 
 const noDb = {} as Queryable;
 
@@ -50,6 +50,41 @@ describe('thread tags', () => {
     expect(threadRoot({ tags: [['e', 'r', '', 'root'], ['e', 'p', '', 'reply']] })).toBe('r');
     expect(threadRoot({ tags: [['e', 'p', '', 'reply']] })).toBe('p');
     expect(threadRoot({ tags: [['h', 'x']] })).toBeUndefined();
+  });
+});
+
+describe('DistinctSigner', () => {
+  const recent = new Map<string, number>();
+  const signer = new DistinctSigner(new SecretKeySigner(generateSecretKeyBytes()), recent);
+  const add = { kind: 9000, tags: [['h', 'ch'], ['p', 'pk']], content: '', created_at: 1_000 };
+
+  it('moves a repeated event one second later so its id differs', () => {
+    const first = signer.sign(add);
+    signer.sign({ ...add, kind: 9001 });
+    const again = signer.sign(add);
+    expect(again.created_at).toBe(1_001);
+    expect(again.id).not.toBe(first.id);
+    expect(signer.sign({ ...add, created_at: 2_000 }).created_at).toBe(2_000);
+  });
+
+  it('leaves chat messages deterministic', () => {
+    const message = { kind: 9, tags: [['h', 'ch']], content: 'hi', created_at: 1_000 };
+    expect(signer.sign(message).id).toBe(signer.sign(message).id);
+  });
+});
+
+describe('applyEdits', () => {
+  const message = { id: 'm1', pubkey: 'alice', content: 'original' };
+  const edit = (id: string, pubkey: string, content: string, createdAt: number) => ({ id, pubkey, content, created_at: createdAt, tags: [['e', 'm1']] });
+
+  it('applies the newest edit by the author, by created_at then id', () => {
+    const [result] = applyEdits([message], [edit('b', 'alice', 'second', 20), edit('a', 'alice', 'first', 10), edit('c', 'alice', 'tie wins by id', 20)]);
+    expect(result?.content).toBe('tie wins by id');
+    expect(message.content).toBe('original');
+  });
+
+  it('ignores edits by anyone else', () => {
+    expect(applyEdits([message], [edit('x', 'mallory', 'forged', 99)])[0]?.content).toBe('original');
   });
 });
 

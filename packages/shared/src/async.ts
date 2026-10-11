@@ -124,4 +124,9 @@ export class CoalescedTask {
     clearTimeout(this.#timer);
     this.#timer = undefined;
   }
+
+  /** Resolves when no run is in progress (without asking for another run). */
+  async idle(): Promise<void> {
+    await this.#current;
+  }
 }

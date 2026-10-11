@@ -1,5 +1,22 @@
-// Relay -> Mattermost mirroring of agent-authored messages (docs/bridge-spec.md section 6).
-import { errorFields, replyTarget, secretRefs, tagValue, tagValues, type ChatClient, type KeyStore, type Logger, type MmPost, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
+// Relay -> Mattermost mirroring of agent-authored events (docs/bridge-spec.md section 6): messages, edits,
+// deletions, reactions and typing. Only agents' events flow back; people's events originate in Mattermost.
+import {
+  ChatApiError,
+  errorFields,
+  replyTarget,
+  secretRefs,
+  tagValue,
+  tagValues,
+  type ChatClient,
+  type Identity,
+  type KeyStore,
+  type Logger,
+  type MmPost,
+  type NostrEvent,
+  type RelayClient,
+  type Signer,
+} from '@brain/shared';
+import { emojiForName, nameForEmoji } from './emoji.ts';
 import { displayNameOf, type IdentityService } from './identities.ts';
 import type { BridgeStore, ChannelRow } from './store.ts';
 
@@ -20,6 +37,11 @@ export function splitMessage(text: string, max = MAX_POST_CHARS): string[] {
   return parts;
 }
 
+/** The event a reaction is about: the last `e` tag (NIP-25). */
+function reactionTarget(event: Pick<NostrEvent, 'tags'>): string | undefined {
+  return event.tags.findLast((tag) => tag[0] === 'e')?.[1];
+}
+
 export interface RelayToMmDeps {
   chat: ChatClient;
   store: BridgeStore;
@@ -33,6 +55,10 @@ export interface RelayToMmDeps {
 /** Mattermost shows "is typing" for about 5 s; agents re-send every 4 s, so forward at most every 2 s. */
 const TYPING_THROTTLE_MS = 2000;
 
+const ignoreNotFound = (error: unknown): void => {
+  if (!(error instanceof ChatApiError && error.status === 404)) throw error;
+};
+
 export class RelayToMm {
   readonly #deps: RelayToMmDeps;
   readonly #botClients = new Map<string, ChatClient>();
@@ -42,11 +68,29 @@ export class RelayToMm {
     this.#deps = deps;
   }
 
-  /** Mirror one relay event into Mattermost if it is an agent's message in an active channel. Idempotent. */
+  /** Mirror one relay event into Mattermost if it is an agent's event in an active channel. Idempotent. */
   async handle(channel: ChannelRow, event: NostrEvent): Promise<void> {
     if (channel.state !== 'active') return;
-    if (event.kind === 9) await this.#mirrorMessage(channel, event);
-    else if (event.kind === 20002) await this.#mirrorTyping(channel, event);
+    switch (event.kind) {
+      case 9:
+        return this.#mirrorMessage(channel, event);
+      case 40003:
+        return this.#mirrorEdit(event);
+      case 5:
+        return this.#mirrorDeletion(event);
+      case 7:
+        return this.#mirrorReaction(channel, event);
+      case 20002:
+        return this.#mirrorTyping(channel, event);
+      default:
+        // Kind 9005 is a channel admin's delete; agents are never channel admins.
+        return;
+    }
+  }
+
+  async #agent(event: NostrEvent): Promise<Identity | undefined> {
+    const author = await this.#deps.identities.byPubkey(event.pubkey);
+    return author?.kind === 'agent' ? author : undefined;
   }
 
   /** Agents signal typing with ephemeral kind 20002 (sent over WebSocket); show it in Mattermost as the bot. */
@@ -56,8 +100,8 @@ export class RelayToMm {
     if (now - (this.#lastTyping.get(key) ?? 0) < TYPING_THROTTLE_MS) return;
     this.#lastTyping.set(key, now);
     try {
-      const author = await this.#deps.identities.byPubkey(event.pubkey);
-      if (author?.kind !== 'agent') return;
+      const author = await this.#agent(event);
+      if (!author) return;
       const rootEventId = tagValue(event, 'e');
       const root = rootEventId ? await this.#deps.store.getMessageByEvent(rootEventId) : undefined;
       const bot = await this.#botClient(author.mmUserId);
@@ -68,12 +112,11 @@ export class RelayToMm {
   }
 
   async #mirrorMessage(channel: ChannelRow, event: NostrEvent): Promise<void> {
-    const { store, identities, log } = this.#deps;
-    const author = await identities.byPubkey(event.pubkey);
-    // Only agents' messages flow back; people's messages originate in Mattermost.
-    if (author?.kind !== 'agent') return;
+    const { store, log } = this.#deps;
+    const author = await this.#agent(event);
+    if (!author) return;
     const existing = await store.getMessageByEvent(event.id);
-    if (existing?.mmPostId) return;
+    if (existing?.mmPostId || existing?.deletedAt) return;
     if (existing) {
       // An earlier attempt may have created the post and stopped before recording it.
       const copy = await this.#findPostedCopy(channel, event, author.mmUserId);
@@ -95,6 +138,74 @@ export class RelayToMm {
       await bot.createPost({ channel_id: channel.mmChannelId, message: part, root_id: rootId ?? first.id, props: { relay_event_id: event.id, relay_event_part: index + 2 } });
     }
     log.info({ relayEventId: event.id, mmPostId: first.id, mmChannelId: channel.mmChannelId }, 'Mirrored agent message to Mattermost');
+  }
+
+  /** Kind 40003: apply the newest edit (by created_at, then id) to the agent's post. */
+  async #mirrorEdit(event: NostrEvent): Promise<void> {
+    const { store, log } = this.#deps;
+    const author = await this.#agent(event);
+    const target = tagValue(event, 'e');
+    if (!author || !target) return;
+    const mapped = await store.getMessageByEvent(target);
+    if (!mapped?.mmPostId || mapped.origin !== 'relay' || mapped.deletedAt || mapped.authorMmUserId !== author.mmUserId) return;
+    if (event.created_at < mapped.relayEditAt || (event.created_at === mapped.relayEditAt && event.id <= (mapped.relayEditId ?? ''))) return;
+    const bot = await this.#botClient(author.mmUserId);
+    // Mattermost edits one post; a message long enough to have been split keeps its later parts.
+    const [first] = splitMessage(await this.#rewriteMentions(event));
+    await bot.patchPost(mapped.mmPostId, { message: first ?? '' });
+    await store.setMessageEditedOnRelay(target, event.created_at, event.id);
+    log.info({ relayEventId: target, editEventId: event.id, mmPostId: mapped.mmPostId }, 'Mirrored agent edit to Mattermost');
+  }
+
+  /** Kind 5 by an agent: delete its post (and the post's split parts), or remove its reaction. */
+  async #mirrorDeletion(event: NostrEvent): Promise<void> {
+    const { store, chat, log } = this.#deps;
+    const author = await this.#agent(event);
+    const target = tagValue(event, 'e');
+    if (!author || !target) return;
+    const reaction = await store.getReactionByEvent(target);
+    if (reaction) {
+      if (reaction.origin !== 'relay' || reaction.mmUserId !== author.mmUserId) return;
+      const bot = await this.#botClient(author.mmUserId);
+      await bot.removeReaction(author.mmUserId, reaction.mmPostId, reaction.emojiName).catch(ignoreNotFound);
+      await store.deleteReaction(reaction);
+      log.info({ relayEventId: target, mmPostId: reaction.mmPostId, emoji: reaction.emojiName }, 'Mirrored agent reaction removal to Mattermost');
+      return;
+    }
+    const mapped = await store.getMessageByEvent(target);
+    if (!mapped || mapped.origin !== 'relay' || mapped.deletedAt || mapped.authorMmUserId !== author.mmUserId) return;
+    // Mark first: the post_deleted event this causes must not be mirrored back as a deletion.
+    await store.markMessageDeleted(target);
+    if (!mapped.mmPostId) return;
+    const bot = await this.#botClient(author.mmUserId);
+    const post = await chat.getPost(mapped.mmPostId);
+    const thread = post ? await chat.getThread(post.root_id || post.id).catch(() => []) : [];
+    await bot.deletePost(mapped.mmPostId).catch(ignoreNotFound);
+    for (const part of thread.filter((p) => p.id !== mapped.mmPostId && p.props?.relay_event_id === target && p.delete_at === 0)) {
+      await bot.deletePost(part.id).catch(ignoreNotFound);
+    }
+    log.info({ relayEventId: target, mmPostId: mapped.mmPostId }, 'Mirrored agent deletion to Mattermost');
+  }
+
+  /** Kind 7 by an agent: add the reaction as its bot. */
+  async #mirrorReaction(channel: ChannelRow, event: NostrEvent): Promise<void> {
+    const { store, log } = this.#deps;
+    const author = await this.#agent(event);
+    const target = reactionTarget(event);
+    if (!author || !target) return;
+    if (await store.getReactionByEvent(event.id)) return;
+    const mapped = await store.getMessageByEvent(target);
+    if (!mapped?.mmPostId || mapped.deletedAt) return;
+    const emojiName = nameForEmoji(event.content);
+    if (!emojiName) {
+      log.info({ relayEventId: event.id }, 'Agent reaction has no Mattermost emoji; not mirrored');
+      return;
+    }
+    const bot = await this.#botClient(author.mmUserId);
+    // Adding an existing reaction is harmless, so record it only once Mattermost has it.
+    await bot.addReaction(author.mmUserId, mapped.mmPostId, emojiName);
+    await store.insertReaction({ mmPostId: mapped.mmPostId, mmUserId: author.mmUserId, emoji: emojiForName(emojiName), emojiName, relayEventId: event.id, origin: 'relay', mmChannelId: channel.mmChannelId });
+    log.info({ relayEventId: event.id, mmPostId: mapped.mmPostId, emoji: emojiName }, 'Mirrored agent reaction to Mattermost');
   }
 
   async #findPostedCopy(channel: ChannelRow, event: NostrEvent, botUserId: string): Promise<MmPost | undefined> {

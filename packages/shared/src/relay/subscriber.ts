@@ -133,7 +133,10 @@ class Connection {
     // Rate limits pass quickly; membership may still be on its way (the bridge adds the reader to new channels).
     const delay = reason.startsWith('rate-limited') ? 5000 : 30_000;
     this.#opts.log.warn({ key, reason, delayMs: delay }, 'Relay closed a subscription; retrying');
-    this.#later(() => this.send(['REQ', key, sub.filter]), delay);
+    this.#later(() => {
+      // The subscription may have been closed or moved meanwhile (for example the channel was paused).
+      if (this.subs.get(key) === sub) this.send(['REQ', key, sub.filter]);
+    }, delay);
   }
 
   #later(fn: () => void, ms: number): void {

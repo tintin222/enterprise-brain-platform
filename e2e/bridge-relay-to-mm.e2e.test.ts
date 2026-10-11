@@ -36,6 +36,7 @@ describe('bridge: relay -> Mattermost and the echo agent', () => {
   });
 
   afterAll(async () => {
+    await stack?.archiveCreatedChannels();
     await echoAgent?.stop();
     await bridge?.stop();
     await stack?.close();

@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "nostr-tools": "2.25.2"
+  },
+  "devDependencies": {
+    "emoji-datasource": "16.0.0"
   }
 }

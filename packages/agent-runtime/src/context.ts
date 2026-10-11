@@ -1,6 +1,6 @@
 // Context assembly (docs/agents-and-ingestion.md, A.4): the thread up to the triggering message, channel
 // background, and names, read from the relay with the reader key.
-import { messageTimeSeconds, tagValue, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
+import { applyEdits, messageTimeSeconds, tagValue, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
 import type { ConversationTurn } from './llm/types.ts';
 
 const PROFILE_TTL_MS = 10 * 60 * 1000;
@@ -50,8 +50,9 @@ export async function channelInfo(relay: RelayClient, reader: Signer, channelId:
 }
 
 /**
- * The thread root and its replies up to the trigger, oldest first, with the trigger last. When the thread is
- * short, the few channel messages before it are added as background.
+ * The thread root and its replies up to the trigger, oldest first, with the trigger last, each with its
+ * newest edit applied (deleted messages are already gone: the relay hides them). When the thread is short,
+ * the few channel messages before it are added as background.
  */
 export async function threadEvents(relay: RelayClient, reader: Signer, channelId: string, rootId: string, trigger: NostrEvent): Promise<NostrEvent[]> {
   const found = await relay.query([{ ids: [rootId] }, { kinds: [9], '#h': [channelId], '#e': [rootId], limit: 500 }], reader);
@@ -64,7 +65,8 @@ export async function threadEvents(relay: RelayClient, reader: Signer, channelId
     const before = await relay.query([{ kinds: [9], '#h': [channelId], until: root.created_at - 1, limit: 5 }], reader);
     thread.unshift(...before.filter((event) => !byId.has(event.id) && event.id !== trigger.id).sort((a, b) => a.created_at - b.created_at));
   }
-  return thread;
+  const edits = await relay.query([{ kinds: [40003], '#h': [channelId], '#e': thread.map((event) => event.id), limit: 1000 }], reader);
+  return applyEdits(thread, edits);
 }
 
 /** Turn events into conversation turns within a character budget, keeping the first and the most recent. */

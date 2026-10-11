@@ -10,6 +10,7 @@ export const bridgeConfigSchema = z.object({
   BACKFILL_DAYS: z.coerce.number().int().min(0).default(0),
   RELAY_OVERLAP_SECONDS: z.coerce.number().int().min(0).default(600),
   CATCH_UP_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(300),
+  RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(300),
 });
 
 export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;

@@ -18,6 +18,7 @@ describe('bridge: Mattermost -> relay', () => {
   });
 
   afterAll(async () => {
+    await stack?.archiveCreatedChannels();
     await bridge?.stop();
     await stack?.close();
   });

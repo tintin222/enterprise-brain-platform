@@ -36,6 +36,41 @@ export function signerFromHex(secretKeyHex: string): Signer {
   return new SecretKeySigner(hexToBytes(secretKeyHex));
 }
 
+/** Fingerprint -> the created_at last used for it, shared by the DistinctSigners of one process. */
+export type RecentEvents = Map<string, number>;
+
+/**
+ * A signer that never signs the same event twice. An event id is a hash of pubkey, created_at, kind, tags and
+ * content, so a state toggled back within one second (a reaction removed and re-added, a member removed and
+ * re-added, a channel made open and private again) would repeat an earlier event exactly; the relay answers
+ * `duplicate:` and the change is lost. Such a repeat gets created_at one second later. Chat messages (kind 9)
+ * are left alone: a repeated publish of the same message must stay a duplicate, not become a second message.
+ */
+export class DistinctSigner implements Signer {
+  readonly pubkey: string;
+  readonly #inner: Signer;
+  readonly #recent: RecentEvents;
+
+  constructor(inner: Signer, recent: RecentEvents) {
+    this.#inner = inner;
+    this.#recent = recent;
+    this.pubkey = inner.pubkey;
+  }
+
+  sign(event: UnsignedEvent): NostrEvent {
+    if (event.kind === 9) return this.#inner.sign(event);
+    const fingerprint = createHash('sha256').update(JSON.stringify([this.pubkey, event.kind, event.tags, event.content])).digest('hex');
+    const last = this.#recent.get(fingerprint);
+    const createdAt = last !== undefined && event.created_at <= last ? last + 1 : event.created_at;
+    if (this.#recent.size > 10_000) {
+      const cutoff = nowSeconds() - 120;
+      for (const [key, at] of this.#recent) if (at < cutoff) this.#recent.delete(key);
+    }
+    this.#recent.set(fingerprint, createdAt);
+    return this.#inner.sign({ ...event, created_at: createdAt });
+  }
+}
+
 export function generateSecretKeyBytes(): Uint8Array {
   return generateSecretKey();
 }
@@ -77,6 +112,25 @@ export function messageTimeSeconds(event: Pick<NostrEvent, 'tags' | 'created_at'
 /** History mirrored by the bridge (backfill or old thread roots); agents never answer it. */
 export function isBackfill(event: Pick<NostrEvent, 'tags'>): boolean {
   return tagValue(event, 'backfill') === '1';
+}
+
+/**
+ * Apply edits (kind 40003, spike A4) to messages: for each message the newest edit by its own author wins,
+ * by created_at and then id. Returns new event objects; the originals are not changed.
+ */
+export function applyEdits<T extends Pick<NostrEvent, 'id' | 'pubkey' | 'content'>>(messages: T[], edits: Pick<NostrEvent, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>[]): T[] {
+  const authors = new Map(messages.map((message) => [message.id, message.pubkey]));
+  const newest = new Map<string, Pick<NostrEvent, 'id' | 'content' | 'created_at'>>();
+  for (const edit of edits) {
+    const target = tagValue(edit, 'e');
+    if (!target || authors.get(target) !== edit.pubkey) continue;
+    const current = newest.get(target);
+    if (!current || edit.created_at > current.created_at || (edit.created_at === current.created_at && edit.id > current.id)) newest.set(target, edit);
+  }
+  return messages.map((message) => {
+    const edit = newest.get(message.id);
+    return edit ? { ...message, content: edit.content } : message;
+  });
 }
 
 /** RFC 4122 version 5 UUID: deterministic for a namespace and name. */

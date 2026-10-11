@@ -2,6 +2,7 @@
 // relay membership (kind 9030 by the bridge key) and a profile (kind 0 signed by the identity).
 // Agents are provisioned elsewhere (agent-runtime) but registered the same way (D19).
 import {
+  DistinctSigner,
   ensureProfile,
   ensureRelayMembership,
   KeyedQueue,
@@ -13,6 +14,7 @@ import {
   type Logger,
   type MmUser,
   type RelayClient,
+  type RecentEvents,
   type RelayIdentityContext,
   type Signer,
 } from '@brain/shared';
@@ -28,6 +30,8 @@ export interface IdentityServiceDeps {
   relay: RelayClient;
   chat: ChatClient;
   bridgeSigner: Signer;
+  /** Shared with the bridge's other signers, so no two signed events are identical (DistinctSigner). */
+  recentEvents: RecentEvents;
   log: Logger;
 }
 
@@ -84,8 +88,8 @@ export class IdentityService {
     return this.#deps.identities.getByPubkey(pubkey);
   }
 
-  signerFor(identity: Identity): Promise<Signer> {
-    return this.#deps.keyStore.signerFor(identity.pubkey);
+  async signerFor(identity: Identity): Promise<Signer> {
+    return new DistinctSigner(await this.#deps.keyStore.signerFor(identity.pubkey), this.#deps.recentEvents);
   }
 
   /** Forget cached state for a user, so the next lookup re-checks membership and profile. */

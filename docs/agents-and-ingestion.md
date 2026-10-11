@@ -54,7 +54,7 @@ A persistent job queue in Postgres is enough for v1.
 
 For a job, assemble:
 
-1. **Thread.** The root event and its replies, oldest first, each as `{author display name, role (person or agent), time, text}`. Cap by token budget, keeping the root and the most recent messages.
+1. **Thread.** The root event and its replies, oldest first, each as `{author display name, role (person or agent), time, text}`, with each message's newest edit (kind 40003 by its author) applied; the relay already hides deleted messages. Cap by token budget, keeping the root and the most recent messages.
 2. **Channel background.** Channel name and purpose, plus the last few channel messages before the thread if the thread is short.
 3. **Retrieved knowledge.** Query the brain with the question, passing the channel id and the asking person's identity so retrieval honours access rules.
 
@@ -137,7 +137,7 @@ Re-render and upsert the thread document when a message is added, edited or dele
 ### B.4 Deletion and retention
 
 - A deletion event removes the message from its thread document; if the thread becomes empty, delete the document.
-- When a channel is paused or archived, follow the retention choice in Q4 of `docs/decisions.md`.
+- When a channel is paused or archived, follow the retention choice in Q4 of `docs/decisions.md`: keep its documents, stop updating them, exclude them from retrieval. The bridge removes the reader key from such channels (D28), so the reader's 44101 notification is the signal.
 - Keep a way to purge everything from one channel or one author on request.
 
 ### B.5 Tests that must exist

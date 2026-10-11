@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { buildCreateChannelEvent, buildPostEvent, chooseCreatedAt, ORIGINAL_TIMESTAMP_WINDOW_MS } from './events.ts';
+import { emojiForName, nameForEmoji } from './emoji.ts';
+import {
+  buildArchiveEvent,
+  buildChannelMetadataEvent,
+  buildCreateChannelEvent,
+  buildDeletionEvent,
+  buildEditEvent,
+  buildPostEvent,
+  buildReactionEvent,
+  channelMetadata,
+  chooseCreatedAt,
+  metadataHash,
+  ORIGINAL_TIMESTAMP_WINDOW_MS,
+  postContent,
+} from './events.ts';
 import { extractMentionUsernames } from './mentions.ts';
 
 describe('chooseCreatedAt', () => {
@@ -49,6 +63,101 @@ describe('buildCreateChannelEvent', () => {
       ['visibility', 'private'],
       ['about', 'purpose'],
     ]);
+  });
+});
+
+describe('postContent', () => {
+  it('appends attachment names and the permalink', () => {
+    expect(postContent('see this', ['a.pdf', 'b.png'], 'http://mm/team/pl/p1')).toBe('see this\n\n📎 Attachments: a.pdf, b.png (http://mm/team/pl/p1)');
+    expect(postContent('', ['a.pdf'], 'http://mm/team/pl/p1')).toBe('📎 Attachments: a.pdf (http://mm/team/pl/p1)');
+    expect(postContent('plain', [], 'unused')).toBe('plain');
+  });
+});
+
+describe('edit, deletion and reaction events', () => {
+  const nowMs = 1_800_000_100_000;
+
+  it('builds an edit with the target, provenance and the edit time', () => {
+    const event = buildEditEvent({ relayChannelId: 'ch', targetEventId: 'ev1', postId: 'p1', content: 'new text', editAtMs: 1_800_000_099_000, mentionPubkeys: ['pk'], nowMs });
+    expect(event).toMatchObject({ kind: 40003, content: 'new text', created_at: 1_800_000_099 });
+    expect(event.tags).toEqual([
+      ['h', 'ch'],
+      ['e', 'ev1'],
+      ['mm', 'p1'],
+      ['mm_ts', '1800000099000'],
+      ['p', 'pk'],
+    ]);
+  });
+
+  it('builds deletions as the author (5) or as the channel owner (9005)', () => {
+    expect(buildDeletionEvent(5, 'ch', 'ev1', nowMs)).toEqual({ kind: 5, tags: [['h', 'ch'], ['e', 'ev1']], content: '', created_at: 1_800_000_100 });
+    expect(buildDeletionEvent(9005, 'ch', 'ev1', nowMs).kind).toBe(9005);
+  });
+
+  it('builds a reaction with the target author', () => {
+    const event = buildReactionEvent({ relayChannelId: 'ch', targetEventId: 'ev1', targetAuthorPubkey: 'author', emoji: '👍', nowMs });
+    expect(event).toMatchObject({ kind: 7, content: '👍' });
+    expect(event.tags).toEqual([
+      ['h', 'ch'],
+      ['e', 'ev1'],
+      ['p', 'author'],
+    ]);
+  });
+});
+
+describe('channel metadata', () => {
+  const channel = { name: 'town-square', display_name: 'Town Square', purpose: ' Company news ', header: 'Links: wiki', type: 'P' as const };
+
+  it('combines purpose and header into the about text', () => {
+    expect(channelMetadata(channel)).toEqual({ name: 'Town Square', about: 'Company news\n\nLinks: wiki', visibility: 'private' });
+    expect(channelMetadata({ ...channel, display_name: ' ', purpose: '', header: '', type: 'O' })).toEqual({ name: 'town-square', about: '', visibility: 'open' });
+  });
+
+  it('changes the hash when any published field changes', () => {
+    const base = metadataHash(channelMetadata(channel));
+    expect(metadataHash(channelMetadata({ ...channel }))).toBe(base);
+    expect(metadataHash(channelMetadata({ ...channel, header: 'other' }))).not.toBe(base);
+    expect(metadataHash(channelMetadata({ ...channel, type: 'O' }))).not.toBe(base);
+  });
+
+  it('publishes an empty about to clear it, and archive flags', () => {
+    const event = buildChannelMetadataEvent({ relayChannelId: 'ch', name: 'N', about: '', visibility: 'open', nowMs: 1_000 });
+    expect(event.tags).toEqual([
+      ['h', 'ch'],
+      ['name', 'N'],
+      ['about', ''],
+      ['visibility', 'open'],
+    ]);
+    expect(buildArchiveEvent('ch', true, 1_000).tags).toEqual([
+      ['h', 'ch'],
+      ['archived', 'true'],
+    ]);
+  });
+});
+
+describe('emoji', () => {
+  it('maps Mattermost names to emoji, including aliases and skin tones', () => {
+    expect(emojiForName('+1')).toBe('👍');
+    expect(emojiForName('thumbsup')).toBe('👍');
+    expect(emojiForName('tada')).toBe('🎉');
+    expect(emojiForName('+1_light_skin_tone')).toBe('👍🏻');
+    expect(emojiForName('heart')).toBe('❤️');
+  });
+
+  it('keeps custom emoji as :name:', () => {
+    expect(emojiForName('company-logo')).toBe(':company-logo:');
+    expect(nameForEmoji(':company-logo:')).toBe('company-logo');
+  });
+
+  it('maps relay content back to the primary Mattermost name', () => {
+    expect(nameForEmoji('👍')).toBe('+1');
+    expect(nameForEmoji('❤')).toBe('heart');
+    expect(nameForEmoji('❤️')).toBe('heart');
+    expect(nameForEmoji('👍🏻')).toBe('+1_light_skin_tone');
+    expect(nameForEmoji('+')).toBe('+1');
+    expect(nameForEmoji('')).toBe('+1');
+    expect(nameForEmoji('-')).toBe('-1');
+    expect(nameForEmoji('not an emoji')).toBeUndefined();
   });
 });
 

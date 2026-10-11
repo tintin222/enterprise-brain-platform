@@ -24,9 +24,14 @@ export class OutboxPublisher {
   }
 
   /** Store and publish a signed event. Returns false if it was dead-lettered. */
-  async publish(row: Omit<OutboxRow, 'attempts'>): Promise<boolean> {
+  async publish(row: Omit<OutboxRow, 'attempts' | 'meta'> & { meta?: Record<string, unknown> }): Promise<boolean> {
     await this.#deps.store.insertOutbox(row);
-    return this.publishRow({ ...row, attempts: 0 });
+    return this.publishRow({ ...row, attempts: 0, meta: row.meta ?? {} });
+  }
+
+  /** The signer for a pubkey the bridge holds: its own key or one from the key store. */
+  signerFor(pubkey: string): Promise<Signer> {
+    return this.#deps.signerFor(pubkey);
   }
 
   async publishRow(row: OutboxRow): Promise<boolean> {

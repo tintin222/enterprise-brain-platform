@@ -2,7 +2,7 @@
 // the WebSocket event stream over Node's built-in WebSocket.
 import type { Logger } from '../logger.ts';
 import { MattermostEventStream, type ChatEventHandlers, type ChatEventStream } from './events.ts';
-import type { MmBot, MmChannel, MmPost, MmReaction, MmTeam, MmUser, NewPost } from './types.ts';
+import type { MmBot, MmChannel, MmFileInfo, MmPost, MmPostList, MmReaction, MmTeam, MmUser, NewPost } from './types.ts';
 
 export class ChatApiError extends Error {
   readonly status: number;
@@ -31,14 +31,20 @@ export interface ChatClient {
   getTeamByName(name: string): Promise<MmTeam | undefined>;
   getMyTeams(): Promise<MmTeam[]>;
   getMyChannels(teamId: string): Promise<MmChannel[]>;
+  /** Channels another user belongs to in a team (needs the system admin role). */
+  getUserChannels(userId: string, teamId: string): Promise<MmChannel[]>;
   getChannel(channelId: string): Promise<MmChannel | undefined>;
   getChannelMemberIds(channelId: string): Promise<string[]>;
+  isChannelMember(channelId: string, userId: string): Promise<boolean>;
   addChannelMember(channelId: string, userId: string): Promise<void>;
   removeChannelMember(channelId: string, userId: string): Promise<void>;
   getPost(postId: string): Promise<MmPost | undefined>;
   /** Posts created, edited or deleted at or after `sinceMs`, oldest first. */
   getPostsSince(channelId: string, sinceMs: number): Promise<MmPost[]>;
+  /** One page of a channel's posts, newest first (`perPage` at most 200). */
+  getChannelPostsPage(channelId: string, page: number, perPage: number): Promise<MmPostList>;
   getThread(rootId: string): Promise<MmPost[]>;
+  getFileInfos(postId: string): Promise<MmFileInfo[]>;
   createPost(post: NewPost): Promise<MmPost>;
   patchPost(postId: string, patch: { message: string }): Promise<MmPost>;
   deletePost(postId: string): Promise<void>;
@@ -138,6 +144,10 @@ export class MattermostChatClient implements ChatClient {
     return this.#request('GET', `/users/me/teams/${teamId}/channels`);
   }
 
+  getUserChannels(userId: string, teamId: string): Promise<MmChannel[]> {
+    return this.#request('GET', `/users/${userId}/teams/${teamId}/channels`);
+  }
+
   getChannel(channelId: string): Promise<MmChannel | undefined> {
     return this.#find(`/channels/${channelId}`);
   }
@@ -150,6 +160,10 @@ export class MattermostChatClient implements ChatClient {
       ids.push(...members.map((member) => member.user_id));
       if (members.length < perPage) return ids;
     }
+  }
+
+  async isChannelMember(channelId: string, userId: string): Promise<boolean> {
+    return (await this.#find(`/channels/${channelId}/members/${userId}`)) !== undefined;
   }
 
   async addChannelMember(channelId: string, userId: string): Promise<void> {
@@ -167,6 +181,15 @@ export class MattermostChatClient implements ChatClient {
   async getPostsSince(channelId: string, sinceMs: number): Promise<MmPost[]> {
     const result = await this.#request<{ order: string[]; posts: Record<string, MmPost> }>('GET', `/channels/${channelId}/posts?since=${sinceMs}`);
     return Object.values(result.posts ?? {}).sort((a, b) => a.create_at - b.create_at || a.update_at - b.update_at);
+  }
+
+  async getChannelPostsPage(channelId: string, page: number, perPage: number): Promise<MmPostList> {
+    const result = await this.#request<Partial<MmPostList>>('GET', `/channels/${channelId}/posts?page=${page}&per_page=${perPage}`);
+    return { order: result.order ?? [], posts: result.posts ?? {} };
+  }
+
+  async getFileInfos(postId: string): Promise<MmFileInfo[]> {
+    return (await this.#request<MmFileInfo[] | null>('GET', `/posts/${postId}/files/info`)) ?? [];
   }
 
   async getThread(rootId: string): Promise<MmPost[]> {

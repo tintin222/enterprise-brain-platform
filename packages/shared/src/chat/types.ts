@@ -45,7 +45,22 @@ export interface MmPost {
   delete_at: number;
   props?: Record<string, unknown>;
   file_ids?: string[];
-  metadata?: { files?: { id: string; name: string }[] };
+  has_reactions?: boolean;
+  /** Included in REST responses and in `posted` events (files only there). */
+  metadata?: { files?: MmFileInfo[]; reactions?: MmReaction[] };
+}
+
+export interface MmFileInfo {
+  id: string;
+  name: string;
+  mime_type?: string;
+  size?: number;
+}
+
+/** One page of a channel's posts: `order` lists the page's posts newest first; `posts` may hold more (thread roots). */
+export interface MmPostList {
+  order: string[];
+  posts: Record<string, MmPost>;
 }
 
 export interface NewPost {
@@ -60,6 +75,7 @@ export interface MmReaction {
   post_id: string;
   emoji_name: string;
   create_at: number;
+  delete_at?: number;
 }
 
 export interface MmBot {

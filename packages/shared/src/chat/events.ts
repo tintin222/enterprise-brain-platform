@@ -2,7 +2,7 @@
 // `onConnected`, which fires after every (re)authentication, because events can be lost while offline.
 import { backoffDelay } from '../async.ts';
 import type { Logger } from '../logger.ts';
-import type { ChatEvent, MmPost } from './types.ts';
+import type { ChatEvent, MmChannel, MmPost, MmReaction } from './types.ts';
 
 export interface ChatEventHandlers {
   onEvent(event: ChatEvent): void;
@@ -89,11 +89,25 @@ export class MattermostEventStream implements ChatEventStream {
 
 /** The post carried by `posted`, `post_edited` and `post_deleted` (a JSON string on the wire). */
 export function postFromEvent(event: ChatEvent): MmPost | undefined {
-  const raw = event.data.post;
+  return parsedField<MmPost>(event, 'post');
+}
+
+function parsedField<T>(event: ChatEvent, field: string): T | undefined {
+  const raw = event.data[field];
   if (typeof raw !== 'string') return undefined;
   try {
-    return JSON.parse(raw) as MmPost;
+    return JSON.parse(raw) as T;
   } catch {
     return undefined;
   }
+}
+
+/** The reaction carried by `reaction_added` and `reaction_removed`. */
+export function reactionFromEvent(event: ChatEvent): MmReaction | undefined {
+  return parsedField<MmReaction>(event, 'reaction');
+}
+
+/** The channel carried by `channel_updated`. */
+export function channelFromEvent(event: ChatEvent): MmChannel | undefined {
+  return parsedField<MmChannel>(event, 'channel');
 }
