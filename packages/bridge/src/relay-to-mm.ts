@@ -1,5 +1,5 @@
 // Relay -> Mattermost mirroring of agent-authored messages (docs/bridge-spec.md section 6).
-import { replyTarget, secretRefs, tagValues, type ChatClient, type KeyStore, type Logger, type MmPost, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
+import { errorFields, replyTarget, secretRefs, tagValue, tagValues, type ChatClient, type KeyStore, type Logger, type MmPost, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
 import { displayNameOf, type IdentityService } from './identities.ts';
 import type { BridgeStore, ChannelRow } from './store.ts';
 
@@ -30,9 +30,13 @@ export interface RelayToMmDeps {
   log: Logger;
 }
 
+/** Mattermost shows "is typing" for about 5 s; agents re-send every 4 s, so forward at most every 2 s. */
+const TYPING_THROTTLE_MS = 2000;
+
 export class RelayToMm {
   readonly #deps: RelayToMmDeps;
   readonly #botClients = new Map<string, ChatClient>();
+  readonly #lastTyping = new Map<string, number>();
 
   constructor(deps: RelayToMmDeps) {
     this.#deps = deps;
@@ -42,6 +46,25 @@ export class RelayToMm {
   async handle(channel: ChannelRow, event: NostrEvent): Promise<void> {
     if (channel.state !== 'active') return;
     if (event.kind === 9) await this.#mirrorMessage(channel, event);
+    else if (event.kind === 20002) await this.#mirrorTyping(channel, event);
+  }
+
+  /** Agents signal typing with ephemeral kind 20002 (sent over WebSocket); show it in Mattermost as the bot. */
+  async #mirrorTyping(channel: ChannelRow, event: NostrEvent): Promise<void> {
+    const key = `${event.pubkey}:${channel.mmChannelId}`;
+    const now = Date.now();
+    if (now - (this.#lastTyping.get(key) ?? 0) < TYPING_THROTTLE_MS) return;
+    this.#lastTyping.set(key, now);
+    try {
+      const author = await this.#deps.identities.byPubkey(event.pubkey);
+      if (author?.kind !== 'agent') return;
+      const rootEventId = tagValue(event, 'e');
+      const root = rootEventId ? await this.#deps.store.getMessageByEvent(rootEventId) : undefined;
+      const bot = await this.#botClient(author.mmUserId);
+      await bot.sendTyping(author.mmUserId, channel.mmChannelId, root?.mmPostId ?? undefined);
+    } catch (error) {
+      this.#deps.log.debug({ relayEventId: event.id, ...errorFields(error) }, 'Could not show typing in Mattermost');
+    }
   }
 
   async #mirrorMessage(channel: ChannelRow, event: NostrEvent): Promise<void> {

@@ -36,15 +36,15 @@ Disabling an agent deactivates the bot account and stops dispatch; it does not d
 
 Use a single dispatcher instead of one relay connection per agent.
 
-1. The dispatcher reads the relay as the shared reader key with one subscription per active channel, each naming that single channel in `#h` **(A7)**. A filter listing several channels, or filtering by `#p` alone, receives nothing live. Limits and pacing are in `docs/bridge-spec.md` section 6.
+1. The dispatcher reads the relay as the shared reader key with one subscription per active channel (catch-up for all of them is one paged `{"kinds":[9],"#p":[<agent keys>],"since":…}` query, D27), each naming that single channel in `#h` **(A7)**. A filter listing several channels, or filtering by `#p` alone, receives nothing live. Limits and pacing are in `docs/bridge-spec.md` section 6.
 2. For each chat event (kind 9), collect the mentioned pubkeys from its `["p", …]` tags **(A3, confirmed)** and keep those that belong to active agents. Mention text in content is `@Display Name` and is not needed for matching.
-3. For each such agent, check it is a member of the channel (relay kind 39002, cached). Keep the cache fresh with a `{"kinds":[39002],"#h":[channel]}` subscription per channel, which delivers the updated list live. Membership notifications (44100/44101) only reach the key they are about, so they cannot track agents **(A6)**.
-4. Enqueue a job keyed by `(agent_id, thread_root_event_id)`. At most one job runs per key; later mentions in the same thread queue behind it.
+3. For each such agent, check it is a member of the channel (relay kind 39002, cached; seeded for every channel by one `{"kinds":[39002],"#p":[<reader>]}` query). Keep the cache fresh with a `{"kinds":[39002],"#h":[channel]}` subscription per channel, which delivers the updated list live. Membership notifications (44100/44101) only reach the key they are about, so they cannot track agents **(A6)**.
+4. Enqueue a job keyed by `(agent_id, thread_root_event_id)`. At most one job runs per key; later mentions in the same thread queue behind it. As built: table `runtime.jobs`, unique on `(agent_id, trigger_event_id)`, which is also the record of processed events; open jobs resume after a restart.
 
 Do not trigger when:
 
 - the event's author is an agent and the mention is not explicit in the content,
-- the agent has already replied more than `MAX_REPLIES_PER_THREAD` times in that thread within the window,
+- the agent has already replied more than `MAX_REPLIES_PER_THREAD` times in that thread within the window (`REPLY_WINDOW_SECONDS`; queued and running jobs count too, so a burst cannot overshoot),
 - the event is older than `MAX_EVENT_AGE` (avoids answering history during catch-up or backfill). Take the age from the `["mm_ts", …]` tag when present, because the bridge cannot give old messages their original `created_at`, and never trigger on events tagged `["backfill", "1"]`,
 - the event id was already processed (store processed ids).
 
@@ -62,9 +62,9 @@ Present chat content to the model as quoted conversation material. The agent's i
 
 ### A.5 Generating and publishing
 
-1. Signal activity if supported (relay typing indicator, kind 20002, ephemeral).
+1. Signal activity: typing (kind 20002, ephemeral) over a short-lived WebSocket authenticated as the agent, repeated every 4 s while generating. The relay refuses 20002 over HTTP. The bridge shows it in Mattermost as the agent's bot.
 2. Call the model through a provider interface (`LlmProvider.generate`), with tool calls limited to the agent's allow-list.
-3. Publish the reply as kind 9 signed by the agent's key, with the channel tag, a reply tag pointing at the thread root, and `["e", <triggering event id>, "", "mention"]`. The relay ignores that marker for threading, but a `#e` query by the triggering event finds the reply, so a restarted runtime can see which mentions it already answered. Publish through `RelayClient` using the same HTTP path the bridge uses **(A1, confirmed)**. To mention a person, use `@Display Name` in the text and a `["p", pubkey]` tag.
+3. Publish the reply as kind 9 signed by the agent's key, with the channel tag, a reply tag pointing at the thread root, and `["e", <triggering event id>, "", "mention"]`. The relay ignores that marker for threading, but a `#e` query by the triggering event finds the reply, so a restarted runtime can see which mentions it already answered. The reply also p-tags the author of the triggering message and any registered agent the reply names with `@handle` (D26). Publish through `RelayClient` using the same HTTP path the bridge uses **(A1, confirmed)**. To mention a person, use `@Display Name` in the text and a `["p", pubkey]` tag.
 4. The bridge mirrors it into Mattermost. The runtime does not post to Mattermost itself.
 
 Streaming is optional and later: publish a first partial reply, then edit events (kind 40003 `[["h", channel], ["e", reply_id]]` with the full text so far) at a throttled rate **(A4, confirmed)**. The relay allows each key 300 HTTP calls per minute by default.

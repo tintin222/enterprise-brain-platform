@@ -2,6 +2,7 @@
 // Behaviour this relies on was verified in Phase 0 (docs/spike-findings.md, A1 and A7).
 import { createHash, randomBytes } from 'node:crypto';
 import type { Filter } from 'nostr-tools/filter';
+import { retry } from '../async.ts';
 import { nowSeconds, type NostrEvent, type Signer } from '../nostr.ts';
 
 export type { Filter };
@@ -110,10 +111,22 @@ export class BuzzRelayClient implements RelayClient {
     return { accepted: result.accepted === true, duplicate, message };
   }
 
-  async query(filters: Filter[], signer: Signer): Promise<NostrEvent[]> {
-    const { status, body, text } = await this.#post('/query', filters, signer);
-    if (status !== 200) throw this.#error('/query', status, body, text);
-    return Array.isArray(body) ? (body as NostrEvent[]) : [];
+  /** Waits out rate limits (429/503) a few times before giving up. */
+  query(filters: Filter[], signer: Signer): Promise<NostrEvent[]> {
+    return retry(
+      async () => {
+        const { status, body, text } = await this.#post('/query', filters, signer);
+        if (status !== 200) throw this.#error('/query', status, body, text);
+        return Array.isArray(body) ? (body as NostrEvent[]) : [];
+      },
+      {
+        attempts: 4,
+        baseMs: 500,
+        maxMs: 5000,
+        isRetryable: (error) => error instanceof RelayError && (error.status === 429 || error.status === 503),
+        minDelayMs: (error) => (error instanceof RelayError && error.retryAfterMs !== undefined ? Math.min(error.retryAfterMs, 30_000) : undefined),
+      },
+    );
   }
 
   async *queryAll(filter: Filter, signer: Signer, pageSize = 500): AsyncGenerator<NostrEvent> {

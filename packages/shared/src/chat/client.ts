@@ -51,6 +51,8 @@ export interface ChatClient {
   enableBot(userId: string): Promise<void>;
   createUserAccessToken(userId: string, description: string): Promise<string>;
   addTeamMember(teamId: string, userId: string): Promise<void>;
+  /** Show "<user> is typing" in a channel (or thread) for a few seconds. */
+  sendTyping(userId: string, channelId: string, parentId?: string): Promise<void>;
   permalink(teamName: string, postId: string): string;
   connectEvents(handlers: ChatEventHandlers, logger: Logger): ChatEventStream;
 }
@@ -218,6 +220,10 @@ export class MattermostChatClient implements ChatClient {
 
   async addTeamMember(teamId: string, userId: string): Promise<void> {
     await this.#request('POST', `/teams/${teamId}/members`, { team_id: teamId, user_id: userId });
+  }
+
+  async sendTyping(userId: string, channelId: string, parentId?: string): Promise<void> {
+    await this.#request('POST', `/users/${userId}/typing`, { channel_id: channelId, ...(parentId ? { parent_id: parentId } : {}) });
   }
 
   permalink(teamName: string, postId: string): string {

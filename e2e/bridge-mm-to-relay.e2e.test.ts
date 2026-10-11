@@ -102,8 +102,10 @@ describe('bridge: Mattermost -> relay', () => {
 
     const all = [...before, ...during, ...after];
     for (const post of all) await stack.waitForEventForPost(channel.id, post.id);
-    // Let at least one periodic catch-up run over the same posts again.
-    await new Promise((resolve) => setTimeout(resolve, 7000));
+    // Run both catch-ups over the same posts again: still no duplicates.
+    await bridge.catchUpAll();
+    await bridge.relayCatchUp();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     for (const post of all) expect(await stack.eventsForPost(channel.id, post.id), post.message).toHaveLength(1);
 
     const replyEvent = (await stack.eventsForPost(channel.id, during[2]!.id))[0];

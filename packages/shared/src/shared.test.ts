@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { KeyedQueue, retry } from './async.ts';
+import { CoalescedTask, KeyedQueue, retry } from './async.ts';
 import { ConfigError, parseConfig } from './config.ts';
 import type { Queryable } from './db.ts';
 import { KeyStore, KeyStoreError } from './key-store.ts';
@@ -79,6 +79,40 @@ describe('KeyedQueue', () => {
     await Promise.all([p1, p3]);
     expect(order).toEqual([1, 3]);
     await queue.idle();
+  });
+});
+
+describe('CoalescedTask', () => {
+  it('never overlaps runs and folds calls made during a run into one more run', async () => {
+    let running = 0;
+    let maxRunning = 0;
+    let runs = 0;
+    const task = new CoalescedTask(
+      async () => {
+        running++;
+        maxRunning = Math.max(maxRunning, running);
+        runs++;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        running--;
+      },
+      () => undefined,
+    );
+    const first = task.run();
+    void task.run();
+    void task.run();
+    await first;
+    expect(maxRunning).toBe(1);
+    expect(runs).toBe(2);
+  });
+
+  it('merges scheduled calls within the delay', async () => {
+    let runs = 0;
+    const task = new CoalescedTask(() => Promise.resolve(void runs++), () => undefined);
+    task.schedule(20);
+    task.schedule(20);
+    task.schedule(20);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(runs).toBe(1);
   });
 });
 

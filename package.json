@@ -19,6 +19,7 @@
     "dev:down": "tsx scripts/dev/down.ts",
     "dev:seed": "tsx scripts/dev/seed.ts",
     "bridge": "tsx packages/bridge/src/main.ts",
+    "agent-runtime": "tsx packages/agent-runtime/src/main.ts",
     "agent:provision": "tsx packages/agent-runtime/src/cli/provision.ts",
     "agent:echo": "tsx packages/agent-runtime/src/cli/echo.ts",
     "spike": "tsx scripts/spike/run.ts",

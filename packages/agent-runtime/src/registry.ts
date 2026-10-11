@@ -67,6 +67,11 @@ export class AgentRepository {
     return r.rows[0] ? toRecord(r.rows[0]) : undefined;
   }
 
+  async listAll(): Promise<AgentRecord[]> {
+    const r = await this.#db.query<AgentRow>(`SELECT ${COLUMNS} FROM runtime.agents ORDER BY handle`);
+    return r.rows.map(toRecord);
+  }
+
   async listActive(): Promise<AgentRecord[]> {
     const r = await this.#db.query<AgentRow>(`SELECT ${COLUMNS} FROM runtime.agents WHERE status = 'active' ORDER BY handle`);
     return r.rows.map(toRecord);

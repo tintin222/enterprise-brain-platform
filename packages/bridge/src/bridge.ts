@@ -1,6 +1,7 @@
 // The bridge service (docs/bridge-spec.md). Mattermost -> relay: WebSocket events plus REST catch-up.
 // Relay -> Mattermost: one live subscription per active channel plus relay catch-up.
 import {
+  CoalescedTask,
   errorFields,
   IDENTITY_MIGRATIONS_DIR,
   IdentityRepository,
@@ -11,6 +12,7 @@ import {
   RelaySubscriber,
   retry,
   signerFromHex,
+  tagValue,
   type ChatClient,
   type ChatEvent,
   type ChatEventStream,
@@ -34,11 +36,10 @@ import { BRIDGE_MIGRATIONS_DIR, BridgeStore, type ChannelRow } from './store.ts'
 /** Mattermost catch-up re-reads this much before its cursor, to cover clock skew. */
 const CURSOR_MARGIN_MS = 30_000;
 /** Relay kinds the bridge mirrors back into Mattermost. */
-export const RELAY_TO_MM_KINDS = [9, 40003, 5, 9005, 7];
+export const RELAY_TO_MM_KINDS = [9, 40003, 5, 9005, 7, 20002];
 
-export function relayCursorStream(relayChannelId: string): string {
-  return `relay:${relayChannelId}`;
-}
+/** One cursor for relay catch-up across all channels (a Unix time in seconds). */
+export const RELAY_CURSOR_STREAM = 'relay:all';
 
 export interface BridgeDeps {
   config: BridgeConfig;
@@ -71,6 +72,7 @@ export class Bridge {
   #timer: NodeJS.Timeout | undefined;
   #resolveReady!: () => void;
   #stopped = false;
+  readonly #relayCatchUp: CoalescedTask;
 
   constructor(deps: BridgeDeps) {
     this.#deps = deps;
@@ -78,6 +80,10 @@ export class Bridge {
     this.bridgeSigner = signerFromHex(deps.config.BRIDGE_SECRET_KEY);
     this.readerSigner = signerFromHex(deps.config.READER_SECRET_KEY);
     this.ready = new Promise((resolve) => (this.#resolveReady = resolve));
+    this.#relayCatchUp = new CoalescedTask(
+      () => this.#relayCatchUpRun(),
+      (error) => deps.log.error(errorFields(error), 'Relay catch-up failed'),
+    );
   }
 
   get services(): Services {
@@ -117,13 +123,9 @@ export class Bridge {
       onEvent: (key, event) => {
         this.#onRelayEvent(key, event).catch((error: unknown) => log.error({ relayEventId: event.id, ...errorFields(error) }, 'Relay event handling failed'));
       },
-      onActive: (relayChannelId) => {
-        // Catch up once the relay confirms the subscription, so no agent message falls in between.
-        void this.store
-          .getChannelByRelayId(relayChannelId)
-          .then((channel) => (channel ? this.relayCatchUpChannel(channel) : undefined))
-          .catch((error: unknown) => log.error({ relayChannelId, ...errorFields(error) }, 'Relay catch-up failed'));
-      },
+      // Catch up once the relay confirms a subscription, so no agent message falls in between. Many
+      // subscriptions confirm at once on start; they share one (global) catch-up run.
+      onActive: () => this.#relayCatchUp.schedule(1000),
     });
     await this.syncChannels();
     for (const channel of await this.store.listChannels('active')) this.#subscribe(channel);
@@ -142,7 +144,7 @@ export class Bridge {
       log,
     );
     this.#timer = setInterval(() => {
-      Promise.all([this.catchUpAll(), this.relayCatchUpAll()]).catch((error: unknown) => log.error(errorFields(error), 'Periodic catch-up failed'));
+      Promise.all([this.catchUpAll(), this.relayCatchUp()]).catch((error: unknown) => log.error(errorFields(error), 'Periodic catch-up failed'));
     }, config.CATCH_UP_INTERVAL_SECONDS * 1000);
     log.info({ botUserId: me.id }, 'Bridge started');
   }
@@ -150,10 +152,17 @@ export class Bridge {
   async stop(): Promise<void> {
     this.#stopped = true;
     clearInterval(this.#timer);
+    this.#relayCatchUp.cancel();
     this.#events?.close();
     this.#subscriber?.close();
     await this.#queue.idle();
     this.#deps.log.info('Bridge stopped');
+  }
+
+  /** True once the relay confirmed the bridge's subscription for a mapped channel. */
+  async relaySubscriptionActive(mmChannelId: string): Promise<boolean> {
+    const channel = await this.store.getChannel(mmChannelId);
+    return channel !== undefined && (this.#subscriber?.isActive(channel.relayChannelId) ?? false);
   }
 
   #subscribe(channel: ChannelRow): void {
@@ -296,25 +305,38 @@ export class Bridge {
     await Promise.all(channels.map((channel) => this.catchUpChannel(channel.mmChannelId)));
   }
 
-  /** Re-read agents' relay events for a channel from its cursor minus the overlap window. */
-  relayCatchUpChannel(channel: ChannelRow): Promise<void> {
-    return this.#queue.run(channel.mmChannelId, async () => {
-      const agents = (await new IdentityRepository(this.#deps.pool).listByKind('agent')).map((identity) => identity.pubkey);
-      if (agents.length === 0) return;
-      const stream = relayCursorStream(channel.relayChannelId);
-      const cursor = (await this.store.getCursor(stream)) ?? Math.floor(channel.enabledAt.getTime() / 1000);
-      const startedAt = nowSeconds();
-      const events: NostrEvent[] = [];
-      const filter: Filter = { kinds: RELAY_TO_MM_KINDS, '#h': [channel.relayChannelId], authors: agents, since: Math.max(0, cursor - this.#deps.config.RELAY_OVERLAP_SECONDS) };
-      for await (const event of this.#deps.relay.queryAll(filter, this.readerSigner)) events.push(event);
-      events.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-      for (const event of events) await this.#processRelayEvent(channel, event);
-      await this.store.setCursor(stream, startedAt);
-    });
+  /** Re-read agents' relay events since the cursor minus the overlap window, across all channels at once. */
+  relayCatchUp(): Promise<void> {
+    return this.#relayCatchUp.run();
   }
 
-  async relayCatchUpAll(): Promise<void> {
+  async #relayCatchUpRun(): Promise<void> {
+    if (this.#stopped) return;
+    const agents = (await new IdentityRepository(this.#deps.pool).listByKind('agent')).map((identity) => identity.pubkey);
     const channels = await this.store.listChannels('active');
-    await Promise.all(channels.map((channel) => this.relayCatchUpChannel(channel)));
+    if (agents.length === 0 || channels.length === 0) return;
+    const oldestEnabled = Math.min(...channels.map((channel) => Math.floor(channel.enabledAt.getTime() / 1000)));
+    const cursor = (await this.store.getCursor(RELAY_CURSOR_STREAM)) ?? oldestEnabled;
+    const startedAt = nowSeconds();
+    // A filter without #h returns stored events from every channel the reader can read (spike A7), so one
+    // paged query covers all channels. Typing (20002) is ephemeral and never stored.
+    const kinds = RELAY_TO_MM_KINDS.filter((kind) => kind !== 20002);
+    const filter: Filter = { kinds, authors: agents, since: Math.max(0, cursor - this.#deps.config.RELAY_OVERLAP_SECONDS) };
+    const events: NostrEvent[] = [];
+    for await (const event of this.#deps.relay.queryAll(filter, this.readerSigner)) events.push(event);
+    events.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+    const byRelayId = new Map(channels.map((channel) => [channel.relayChannelId, channel]));
+    for (const event of events) {
+      const channel = byRelayId.get(tagValue(event, 'h') ?? '') ?? (await this.#channelOfTarget(event, channels));
+      if (channel) await this.#queue.run(channel.mmChannelId, () => this.#processRelayEvent(channel, event));
+    }
+    await this.store.setCursor(RELAY_CURSOR_STREAM, startedAt);
+  }
+
+  /** Deletions and reactions may omit the h tag; their channel is their target's. */
+  async #channelOfTarget(event: NostrEvent, channels: ChannelRow[]): Promise<ChannelRow | undefined> {
+    const target = tagValue(event, 'e');
+    const mapped = target ? await this.store.getMessageByEvent(target) : undefined;
+    return mapped ? channels.find((channel) => channel.mmChannelId === mapped.mmChannelId) : undefined;
   }
 }

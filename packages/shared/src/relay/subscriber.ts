@@ -34,6 +34,8 @@ type Frame = unknown[];
 
 class Connection {
   readonly subs = new Map<string, Subscription>();
+  /** Keys the relay has confirmed (EOSE) on the current socket. */
+  readonly active = new Set<string>();
   readonly #owner: RelaySubscriber;
   readonly #opts: RelaySubscriberOptions;
   #socket: WebSocket | undefined;
@@ -69,6 +71,7 @@ class Connection {
     });
     socket.addEventListener('close', () => {
       this.#authenticated = false;
+      this.active.clear();
       if (this.#closed) return;
       const delay = Math.max(500, backoffDelay(this.#attempt++, 1000, 30_000));
       this.#opts.log.warn({ delayMs: delay }, 'Relay WebSocket closed; reconnecting');
@@ -105,7 +108,10 @@ class Connection {
     }
     if (type === 'EOSE' && typeof frame[1] === 'string') {
       this.#opts.log.debug({ key: frame[1] }, 'Relay subscription active');
-      if (this.subs.has(frame[1])) this.#opts.onActive?.(frame[1]);
+      if (this.subs.has(frame[1])) {
+        this.active.add(frame[1]);
+        this.#opts.onActive?.(frame[1]);
+      }
       return;
     }
     if (type === 'CLOSED' && typeof frame[1] === 'string') {
@@ -116,6 +122,7 @@ class Connection {
   }
 
   #onClosed(key: string, reason: string): void {
+    this.active.delete(key);
     const sub = this.subs.get(key);
     if (!sub) return;
     if (reason.includes('too many subscriptions')) {
@@ -189,6 +196,19 @@ export class RelaySubscriber {
     return this.#subs.has(key);
   }
 
+  /** True once the relay has confirmed the subscription on the current connection. */
+  isActive(key: string): boolean {
+    const sub = this.#subs.get(key);
+    return sub !== undefined && sub.connection.active.has(key);
+  }
+
+  /** How many subscriptions are confirmed, for health checks. */
+  get activeCount(): number {
+    let count = 0;
+    for (const connection of this.#connections) count += connection.active.size;
+    return count;
+  }
+
   /** Subscribe (or replace the filter of) `key`. The key doubles as the relay subscription id. */
   subscribe(key: string, filter: Filter): void {
     if (this.#closed) return;
@@ -210,6 +230,7 @@ export class RelaySubscriber {
     if (!sub) return;
     this.#subs.delete(key);
     sub.connection.subs.delete(key);
+    sub.connection.active.delete(key);
     if (sub.connection.authenticated) sub.connection.send(['CLOSE', key]);
   }
 

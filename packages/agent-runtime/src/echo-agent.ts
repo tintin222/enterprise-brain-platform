@@ -2,12 +2,14 @@
 // whole loop without a model. Reads with the shared reader key, one subscription per mirrored channel.
 import {
   ChannelWatcher,
+  CoalescedTask,
   errorFields,
   isBackfill,
   KeyedQueue,
   messageTimeSeconds,
   nowSeconds,
   RelaySubscriber,
+  tagValue,
   tagValues,
   threadRoot,
   type KeyStore,
@@ -36,9 +38,14 @@ export class EchoAgent {
   #signer: Signer | undefined;
   #subscriber: RelaySubscriber | undefined;
   #watcher: ChannelWatcher | undefined;
+  readonly #catchUp: CoalescedTask;
 
   constructor(deps: EchoAgentDeps) {
     this.#deps = deps;
+    this.#catchUp = new CoalescedTask(
+      () => this.#catchUpRun(),
+      (error) => deps.log.error(errorFields(error), 'Echo catch-up failed'),
+    );
   }
 
   async start(): Promise<void> {
@@ -54,7 +61,7 @@ export class EchoAgent {
       },
       onActive: (key) => {
         if (key === this.#watcher?.key) this.#watcher.activated();
-        else void this.#catchUp(key);
+        else this.#catchUp.schedule(1000);
       },
     });
     this.#subscriber = subscriber;
@@ -71,26 +78,25 @@ export class EchoAgent {
       onRemoved: (channelId) => subscriber.unsubscribe(channelId),
     });
     await this.#watcher.start();
+    this.#catchUp.schedule(0);
     log.info({ agent: agent.handle, channels: this.#watcher.channels.size }, 'Echo agent started');
   }
 
   async stop(): Promise<void> {
+    this.#catchUp.cancel();
     this.#subscriber?.close();
     await this.#queue.idle();
   }
 
-  #catchUp(channelId: string): Promise<void> {
-    return this.#queue.run(channelId, async () => {
-      const { relay, readerSigner, agent, overlapSeconds, log } = this.#deps;
-      try {
-        const filter = { kinds: [9], '#h': [channelId], '#p': [agent.nostrPubkey], since: nowSeconds() - overlapSeconds };
-        const events: NostrEvent[] = [];
-        for await (const event of relay.queryAll(filter, readerSigner)) events.push(event);
-        for (const event of events.reverse()) await this.consider(channelId, event);
-      } catch (error) {
-        log.error({ channelId, ...errorFields(error) }, 'Echo catch-up failed');
-      }
-    });
+  /** Recent mentions across all watched channels, in one paged query (spike A7). */
+  async #catchUpRun(): Promise<void> {
+    const { relay, readerSigner, agent, overlapSeconds } = this.#deps;
+    const events: NostrEvent[] = [];
+    for await (const event of relay.queryAll({ kinds: [9], '#p': [agent.nostrPubkey], since: nowSeconds() - overlapSeconds }, readerSigner)) events.push(event);
+    for (const event of events.reverse()) {
+      const channelId = tagValue(event, 'h');
+      if (channelId && this.#watcher?.channels.has(channelId)) await this.#queue.run(channelId, () => this.consider(channelId, event));
+    }
   }
 
   /** Reply once to a fresh mention of this agent. */

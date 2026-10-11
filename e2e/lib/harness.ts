@@ -1,7 +1,7 @@
 // Shared setup for end-to-end tests against the local stack (`pnpm dev:up && pnpm dev:seed`).
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { EchoAgent, provisionAgent, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
+import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
 import { MattermostApi, type MmPost, type MmUser } from '@brain/scripts/lib/mattermost.ts';
 import {
@@ -14,6 +14,7 @@ import {
   loadDotEnv,
   MattermostChatClient,
   nowSeconds,
+  NullBrainClient,
   parseConfig,
   relayChannelIdFor,
   SecretKeySigner,
@@ -58,7 +59,7 @@ export class Stack {
 
   constructor(overrides: Record<string, string> = {}) {
     loadDotEnv();
-    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '5', ...overrides };
+    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '60', ...overrides };
     this.config = parseConfig(bridgeConfigSchema, this.env);
     this.pool = createPool(this.config.STATE_DATABASE_URL);
     this.relay = new BuzzRelayClient(this.config.RELAY_HTTP_URL);
@@ -152,6 +153,22 @@ export class Stack {
       },
       input,
     );
+  }
+
+  /** Start the agent runtime in-process; `overrides` replace settings from .env. */
+  async startRuntime(overrides: Record<string, string> = {}): Promise<AgentRuntime> {
+    const config = parseConfig(runtimeConfigSchema, { ...this.env, ...overrides });
+    const runtime = new AgentRuntime({
+      config,
+      pool: this.pool,
+      relay: this.relay,
+      keyStore: this.keyStore(),
+      brain: new NullBrainClient(),
+      providerFor: providersFromConfig(config),
+      log: this.log('runtime-e2e'),
+    });
+    await runtime.start();
+    return runtime;
   }
 
   async startEcho(agent: AgentRecord): Promise<EchoAgent> {

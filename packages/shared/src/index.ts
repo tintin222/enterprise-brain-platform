@@ -2,6 +2,7 @@
 // the two upstream seams: ChatClient (Mattermost) and RelayClient (Buzz relay). Only this package may
 // import Mattermost or Nostr libraries (CLAUDE.md rule 6).
 export * from './async.ts';
+export * from './brain.ts';
 export * from './chat/client.ts';
 export * from './chat/events.ts';
 export * from './chat/types.ts';
@@ -14,4 +15,5 @@ export * from './nostr.ts';
 export * from './relay-identity.ts';
 export * from './relay/channels.ts';
 export * from './relay/client.ts';
+export * from './relay/session.ts';
 export * from './relay/subscriber.ts';

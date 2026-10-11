@@ -73,6 +73,7 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm dev:down` | Stop the stack and keep its data. `pnpm dev:down --wipe` also deletes every volume and `.env`. |
 | `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
 | `pnpm bridge` | Run the bridge against the local stack (Ctrl-C stops it cleanly) |
+| `pnpm agent-runtime` | Run the agent runtime (dispatcher and job runner). Agents with model `echo` answer without a model; others need `ANTHROPIC_API_KEY`. |
 | `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
 | `pnpm agent:echo [--handle echo]` | Run the echo agent, which answers mentions with "echo: ..." (no model) |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` creates about 250 Mattermost users, so it runs only when named. |

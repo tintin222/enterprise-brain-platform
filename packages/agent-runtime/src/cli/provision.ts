@@ -2,7 +2,7 @@
 // Creates (or updates) an agent: key, Mattermost bot and token, relay identity, registry record.
 import { parseArgs } from 'node:util';
 import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig, signerFromHex } from '@brain/shared';
-import { runtimeConfigSchema } from '../config.ts';
+import { provisionConfigSchema } from '../config.ts';
 import { provisionAgent } from '../provisioning.ts';
 
 const { values } = parseArgs({
@@ -20,7 +20,7 @@ if (!values.handle || !values.name) {
 }
 
 loadDotEnv();
-const config = parseConfig(runtimeConfigSchema);
+const config = parseConfig(provisionConfigSchema);
 const log = createLogger('provision', config.LOG_LEVEL);
 const pool = createPool(config.STATE_DATABASE_URL);
 try {

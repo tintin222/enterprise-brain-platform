@@ -72,3 +72,56 @@ export class KeyedQueue {
     while (this.#tails.size > 0) await Promise.all([...this.#tails.values()]);
   }
 }
+
+/**
+ * A task that never runs twice at once: `run()` during a run asks for one more run afterwards, and
+ * `schedule()` merges calls within a delay into one run. For catch-ups triggered by many events at once.
+ */
+export class CoalescedTask {
+  readonly #fn: () => Promise<void>;
+  readonly #onError: (error: unknown) => void;
+  #timer: NodeJS.Timeout | undefined;
+  #current: Promise<void> | undefined;
+  #again = false;
+
+  constructor(fn: () => Promise<void>, onError: (error: unknown) => void) {
+    this.#fn = fn;
+    this.#onError = onError;
+  }
+
+  schedule(delayMs = 0): void {
+    if (this.#timer) return;
+    this.#timer = setTimeout(() => {
+      this.#timer = undefined;
+      void this.run();
+    }, delayMs);
+  }
+
+  /** Resolves once a run that started after this call has finished. */
+  run(): Promise<void> {
+    if (this.#current) {
+      this.#again = true;
+      return this.#current;
+    }
+    this.#current = (async () => {
+      try {
+        do {
+          this.#again = false;
+          try {
+            await this.#fn();
+          } catch (error) {
+            this.#onError(error);
+          }
+        } while (this.#again);
+      } finally {
+        this.#current = undefined;
+      }
+    })();
+    return this.#current;
+  }
+
+  cancel(): void {
+    clearTimeout(this.#timer);
+    this.#timer = undefined;
+  }
+}
