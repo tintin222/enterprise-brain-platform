@@ -24,7 +24,7 @@ Reproduce with `pnpm dev:up && pnpm dev:seed && pnpm spike <id>`. Each spike pri
 | A6 | Bridge adds relay members (9030) and channel members (9000), incl. agents | **Holds** | Safe under concurrency. `channel_add_policy` can block agents. |
 | A7 | One filter can list many channels in `#h`; limits; paging | **Partly fails** | Live delivery needs one subscription per channel. Cap is 1000, not 500. Page catch-up with `/query` `before_id`. |
 | A8 | Kind 0 fields kept; profiles for custodial keys | **Holds** | Raw profile stored as sent; replaceable. |
-| A9 | Custom tags on kind 9 preserved | **Holds** | `["mm", post_id]` is kept and can even be filtered with `#mm`. |
+| A9 | Custom tags on kind 9 preserved | **Holds** | `["mm", post_id]` is kept. The relay ignores filters on multi-letter tags such as `#mm`, so lookups by post id use the message map. |
 | A10 | `posted` lists mentioned ids; bot sees only its channels; `since` returns edits and deletions; admin bot self-adds to private channels | **Partly fails** | `mentions` lists only the receiving user. Parse `@username` from the text. Everything else holds. |
 | A11 | Bot accounts and tokens work on Team Edition without a licence | **Holds** | None. |
 | A12 | `PUT /media/upload` auth and returned URL | **Holds** (different auth) | Blossom kind 24242 auth, not NIP-98. Reading media also needs auth, so Mattermost clients cannot load relay media URLs. |
@@ -161,7 +161,9 @@ Spec changes: none needed. Profiles carry `name`, `display_name` and `picture` (
 
 ## A9: custom tags
 
-**Result: holds.** Tags `[["h",…],["mm","<post id>"],["mm_ts","…"],["x-custom","a","b","c"]]` came back unchanged and in order. A filter on the multi-letter tag `#mm` also works and returned the event, which is handy for debugging and rebuilds (the mapping table stays the source of truth).
+**Result: holds.** Tags `[["h",…],["mm","<post id>"],["mm_ts","…"],["x-custom","a","b","c"]]` came back unchanged and in order.
+
+Correction (found in Phase 1): the relay silently ignores filters on multi-letter tags. A query `{"kinds":[9],"#mm":["<value no event carries>"]}` returns unrelated events, while a single-letter filter such as `#e` with no match returns none. The first version of this spike wrongly reported that `#mm` filtering works, because its query was also limited to a channel holding that one event. The `mm` tag is still useful when reading events, but finding the event for a post goes through the bridge's message map (or a per-channel query filtered on the client).
 
 ## A10: Mattermost events
 

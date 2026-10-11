@@ -18,6 +18,7 @@
     "dev:up": "tsx scripts/dev/up.ts",
     "dev:down": "tsx scripts/dev/down.ts",
     "dev:seed": "tsx scripts/dev/seed.ts",
+    "bridge": "tsx packages/bridge/src/main.ts",
     "spike": "tsx scripts/spike/run.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r --parallel run typecheck",
     "lint": "eslint .",

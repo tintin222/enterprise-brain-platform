@@ -41,7 +41,7 @@ Private keys are stored encrypted (see `shared/key-store`), decrypted in memory 
 
 ## 3. State
 
-A dedicated Postgres database. Suggested tables; adjust names to taste but keep the uniqueness rules.
+A dedicated Postgres database. Suggested tables; adjust names to taste but keep the uniqueness rules. As built, these tables live in schema `bridge`, except `identity_map`, which lives with the key store in the shared `identity` schema (`identity.identities`, D19, D24).
 
 | Table | Columns | Rules |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ A dedicated Postgres database. Suggested tables; adjust names to taste but keep 
 | `message_map` | `mm_post_id` unique, `relay_event_id` unique, `origin` (`mm`, `relay`), `mm_channel_id`, `author_mm_user_id`, `created_at` | The loop-prevention source of truth |
 | `relay_outbox` | `relay_event_id` PK, `signed_event` (JSON), `mm_post_id`, `attempts`, `created_at` | (A5) Written before the first publish; retries resend this exact event. Deleted once the relay accepts it. |
 | `reaction_map` | `mm_post_id`, `mm_user_id`, `emoji_name`, `relay_event_id` unique | PK on the first three columns |
-| `cursor` | `stream` PK, `position` | One row per Mattermost channel (`last_update_at`) and per relay channel (`last_created_at`) |
+| `cursor` | `stream` PK, `position` | One row per Mattermost channel and per relay channel. For a Mattermost channel the position is a Mattermost time (ms) before which every post was processed: catch-up sets it to its own start time minus a 30 s margin, and live events never move it, so a missed event is always re-read. |
 | `dead_letter` | `id`, `direction`, `payload`, `error`, `attempts`, `created_at` | Events that failed after retries |
 
 ## 4. Channel lifecycle
@@ -82,7 +82,7 @@ Capture: one Mattermost WebSocket connection authenticated as the bridge bot, pl
 Additional rules:
 
 - The relay rejects `created_at` more than 900 seconds from its clock **(A5, failed for backfill)**. Use the post's `create_at` in seconds when it is within 10 minutes of now, otherwise the current time, and always add `["mm_ts", create_at_ms]`. Consumers treat `mm_ts` as the message time. Events published by backfill also carry `["backfill", "1"]` so agents never answer them.
-- Add a provenance tag `["mm", mm_post_id]` to every mirrored event **(A9, confirmed)**. The relay preserves it and can even filter on `#mm`. The mapping table remains the source of truth; the tag is for debugging and rebuilds.
+- Add a provenance tag `["mm", mm_post_id]` to every mirrored event **(A9, confirmed)**. The relay preserves it, but ignores filters on multi-letter tags such as `#mm` (it returns unrelated events), so finding the event for a post goes through `message_map`. The mapping table remains the source of truth; the tag is for debugging and rebuilds.
 - Posts authored by an agent's bot account that are already in `message_map` with origin `relay` are the bridge's own echoes: skip them.
 - Posts by a bot account that is not a registered agent (other integrations) are mirrored like a person's post, with a custodial key for that bot user.
 
@@ -118,7 +118,7 @@ Write the `message_map` row in the same transaction that records the successful 
 ## 8. Ordering, catch-up and reconciliation
 
 - **Ordering.** Process events per channel in order. Different channels may run in parallel.
-- **Mattermost catch-up.** On start and after every WebSocket reconnect, for each active channel call `GET /api/v4/channels/{id}/posts?since={cursor}` and process new, edited and deleted posts **(A10, confirmed)**: edited posts come back with the new text and `edit_at` > 0, deleted posts with `delete_at` > 0 and an empty message, without `include_deleted`. Advance the cursor only after successful processing.
+- **Mattermost catch-up.** On start, after every WebSocket reconnect, and every `CATCH_UP_INTERVAL_SECONDS` (default 300), for each active channel call `GET /api/v4/channels/{id}/posts?since={cursor}` and process new, edited and deleted posts **(A10, confirmed)**: edited posts come back with the new text and `edit_at` > 0, deleted posts with `delete_at` > 0 and an empty message, without `include_deleted`. Advance the cursor only after successful processing.
 - **Relay catch-up.** On start and reconnect, query each active channel through `POST /query` from its cursor minus an overlap window (default 10 minutes), paging with `until` plus the relay's `before_id` extension set to the last event received, and rely on `message_map` to drop duplicates **(A7)**. Paging with `until` alone repeats or skips events that share a second. `created_at` is set by the client, so never treat it as a strict ordering key.
 - **Reconciliation.** Every few minutes: compare Mattermost channel membership with relay membership (kind 39002, queried with `{"kinds":[39002],"#d":[relay_channel_id]}`) and fix differences; find agent bots that are members of channels the bridge is not in and report them (see Q2).
 

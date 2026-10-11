@@ -1,3 +1,14 @@
-// Config, logging, shared types, the key store, and the two upstream seams: ChatClient (Mattermost)
-// and RelayClient (Buzz relay). Built in Phase 1. Only this package may import Mattermost or Nostr libraries.
-export {};
+// @brain/shared: config, logging, the state database, the shared key store and identity map (D19), and
+// the two upstream seams: ChatClient (Mattermost) and RelayClient (Buzz relay). Only this package may
+// import Mattermost or Nostr libraries (CLAUDE.md rule 6).
+export * from './async.ts';
+export * from './chat/client.ts';
+export * from './chat/events.ts';
+export * from './chat/types.ts';
+export * from './config.ts';
+export * from './db.ts';
+export * from './identity.ts';
+export * from './key-store.ts';
+export * from './logger.ts';
+export * from './nostr.ts';
+export * from './relay/client.ts';

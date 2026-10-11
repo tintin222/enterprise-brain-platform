@@ -8,5 +8,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "nostr-tools": "2.25.2",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
   }
 }
