@@ -68,6 +68,17 @@ export function threadRoot(event: Pick<NostrEvent, 'tags'>): string | undefined 
   return event.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? replyTarget(event);
 }
 
+/** When a message was written: the Mattermost time in `mm_ts` (ms) when present (spike A5), else created_at. */
+export function messageTimeSeconds(event: Pick<NostrEvent, 'tags' | 'created_at'>): number {
+  const mmTs = Number(tagValue(event, 'mm_ts'));
+  return Number.isFinite(mmTs) && mmTs > 0 ? Math.floor(mmTs / 1000) : event.created_at;
+}
+
+/** History mirrored by the bridge (backfill or old thread roots); agents never answer it. */
+export function isBackfill(event: Pick<NostrEvent, 'tags'>): boolean {
+  return tagValue(event, 'backfill') === '1';
+}
+
 /** RFC 4122 version 5 UUID: deterministic for a namespace and name. */
 export function uuidv5(name: string, namespace: string): string {
   const ns = Buffer.from(namespace.replace(/-/g, ''), 'hex');

@@ -102,6 +102,22 @@ if (!(await tokenBelongsToBot(env.MM_BRIDGE_TOKEN))) {
   console.log('Created @brain access token (MM_BRIDGE_TOKEN in .env)');
 }
 
+// Agent provisioning creates bots, which Mattermost refuses to bot accounts (even system admins), so it
+// uses a personal access token of the admin user (D25).
+async function tokenBelongsToAdmin(token: string | undefined): Promise<boolean> {
+  if (!token) return false;
+  try {
+    return (await admin.withToken(token).get<MmUser>('/users/me')).id === me.id;
+  } catch {
+    return false;
+  }
+}
+if (!(await tokenBelongsToAdmin(env.MM_ADMIN_TOKEN))) {
+  const token = await admin.post<{ token: string }>(`/users/${me.id}/tokens`, { description: 'agent provisioning (pnpm dev:seed)' });
+  updateEnvFile('MM_ADMIN_TOKEN', token.token);
+  console.log(`Created @${adminUsername} access token for agent provisioning (MM_ADMIN_TOKEN in .env)`);
+}
+
 // --- Relay ---
 const bridge = identityFromHex(requireValue(env, 'BRIDGE_SECRET_KEY'));
 const reader = identityFromHex(requireValue(env, 'READER_SECRET_KEY'));

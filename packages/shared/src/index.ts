@@ -11,4 +11,7 @@ export * from './identity.ts';
 export * from './key-store.ts';
 export * from './logger.ts';
 export * from './nostr.ts';
+export * from './relay-identity.ts';
+export * from './relay/channels.ts';
 export * from './relay/client.ts';
+export * from './relay/subscriber.ts';

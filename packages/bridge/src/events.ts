@@ -48,14 +48,3 @@ export function buildCreateChannelEvent(input: ChannelEventInput): UnsignedEvent
   if (input.about) tags.push(['about', input.about]);
   return { kind: 9007, tags, content: '', created_at: Math.floor(input.nowMs / 1000) };
 }
-
-export interface ProfileInput {
-  username: string;
-  displayName: string;
-  pictureUrl: string;
-}
-
-/** Kind 0 content for a mirrored identity (spike A8). */
-export function profileContent(input: ProfileInput): string {
-  return JSON.stringify({ name: input.username, display_name: input.displayName, picture: input.pictureUrl });
-}

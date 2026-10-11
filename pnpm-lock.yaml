@@ -199,6 +199,9 @@ importers:
 
   e2e:
     dependencies:
+      '@brain/agent-runtime':
+        specifier: workspace:*
+        version: link:../packages/agent-runtime
       '@brain/bridge':
         specifier: workspace:*
         version: link:../packages/bridge
@@ -209,7 +212,14 @@ importers:
         specifier: workspace:*
         version: link:../packages/shared
 
-  packages/agent-runtime: {}
+  packages/agent-runtime:
+    dependencies:
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/bridge:
     dependencies:

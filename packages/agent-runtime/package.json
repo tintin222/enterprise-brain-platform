@@ -8,5 +8,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@brain/shared": "workspace:*",
+    "zod": "4.6.5"
   }
 }

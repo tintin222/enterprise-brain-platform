@@ -1,5 +1,7 @@
 // Shared setup for end-to-end tests against the local stack (`pnpm dev:up && pnpm dev:seed`).
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { EchoAgent, provisionAgent, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
 import { MattermostApi, type MmPost, type MmUser } from '@brain/scripts/lib/mattermost.ts';
 import {
@@ -17,6 +19,7 @@ import {
   SecretKeySigner,
   signerFromHex,
   tagValue,
+  type Logger,
   type NostrEvent,
   type Pool,
   type Signer,
@@ -118,16 +121,70 @@ export class Stack {
     return signer;
   }
 
+  readonly keyStore = (): KeyStore => new KeyStore(this.pool, this.config.KEY_ENCRYPTION_KEY);
+
+  log(name: string): Logger {
+    return createLogger(name, process.env.E2E_LOG_LEVEL ?? 'silent');
+  }
+
   newBridge(): Bridge {
-    const log = createLogger('bridge-e2e', process.env.E2E_LOG_LEVEL ?? 'silent');
     return new Bridge({
       config: this.config,
       pool: this.pool,
       chat: new MattermostChatClient(this.config.MM_URL, this.config.MM_BRIDGE_TOKEN),
       relay: this.relay,
-      keyStore: new KeyStore(this.pool, this.config.KEY_ENCRYPTION_KEY),
-      log,
+      keyStore: this.keyStore(),
+      log: this.log('bridge-e2e'),
     });
+  }
+
+  /** Provision (or re-provision) an agent the way `pnpm agent:provision` does. */
+  provision(input: ProvisionInput): Promise<AgentRecord> {
+    return provisionAgent(
+      {
+        pool: this.pool,
+        chat: new MattermostChatClient(this.config.MM_URL, this.env.MM_ADMIN_TOKEN ?? ''),
+        relay: this.relay,
+        keyStore: this.keyStore(),
+        bridgeSigner: this.bridgeSigner,
+        teamName: this.env.MM_TEAM_NAME ?? '',
+        log: this.log('provision-e2e'),
+      },
+      input,
+    );
+  }
+
+  async startEcho(agent: AgentRecord): Promise<EchoAgent> {
+    const echo = new EchoAgent({
+      relay: this.relay,
+      keyStore: this.keyStore(),
+      readerSigner: this.reader,
+      agent,
+      relayWsUrl: this.config.RELAY_WS_URL,
+      log: this.log('echo-e2e'),
+      maxEventAgeSeconds: 600,
+      overlapSeconds: 600,
+    });
+    await echo.start();
+    return echo;
+  }
+
+  /** Posts in a Mattermost thread (root included), oldest first. */
+  async thread(session: MmSession, rootId: string): Promise<MmPost[]> {
+    const thread = await session.api.get<{ posts: Record<string, MmPost> }>(`/posts/${rootId}/thread`);
+    return Object.values(thread.posts).sort((a, b) => a.create_at - b.create_at);
+  }
+
+  /** Restart the Mattermost container and wait until it answers again. */
+  async restartMattermost(): Promise<void> {
+    execFileSync('docker', ['restart', 'enterprise-brain-mattermost-1'], { stdio: 'ignore' });
+    await waitFor(async () => (await fetch(`${this.config.MM_URL}/api/v4/system/ping`).catch(() => undefined))?.ok, 180_000, 1000);
+  }
+
+  /** Restart the relay container and wait until it is ready again. */
+  async restartRelay(): Promise<void> {
+    execFileSync('docker', ['restart', 'enterprise-brain-relay-1'], { stdio: 'ignore' });
+    await waitFor(async () => (await fetch(`${this.config.RELAY_HTTP_URL}/_readiness`).catch(() => undefined))?.ok, 120_000, 1000);
   }
 
   async startBridge(): Promise<Bridge> {

@@ -9,6 +9,7 @@
   "dependencies": {
     "@brain/scripts": "workspace:*",
     "@brain/shared": "workspace:*",
-    "@brain/bridge": "workspace:*"
+    "@brain/bridge": "workspace:*",
+    "@brain/agent-runtime": "workspace:*"
   }
 }

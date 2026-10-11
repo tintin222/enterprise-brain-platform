@@ -80,6 +80,20 @@ export class ChannelService {
     this.#members.set(channel.relayChannelId, known);
   }
 
+  /** Remove a key from the relay channel (kind 9001 by the bridge). */
+  async removeMember(channel: ChannelRow, pubkey: string): Promise<void> {
+    const { bridgeSigner, relay, log } = this.#deps;
+    const remove = bridgeSigner.sign({ kind: 9001, tags: [['h', channel.relayChannelId], ['p', pubkey]], content: '', created_at: nowSeconds() });
+    try {
+      await relay.publish(remove, bridgeSigner);
+    } catch (error) {
+      if (error instanceof RelayError && !error.retryable) {
+        log.warn({ relayChannelId: channel.relayChannelId, pubkey, ...errorFields(error) }, 'Relay refused channel removal');
+      } else throw error;
+    }
+    this.#members.get(channel.relayChannelId)?.delete(pubkey);
+  }
+
   async pause(mmChannelId: string): Promise<void> {
     const row = await this.#deps.store.getChannel(mmChannelId);
     if (row?.state !== 'active') return;

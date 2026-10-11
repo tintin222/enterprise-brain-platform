@@ -71,8 +71,10 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | --- | --- |
 | `pnpm dev:up` | Create `.env` from `.env.example` if needed (generates service keys and secrets, never overwrites existing values), then start the stack and wait until it is healthy. Mattermost on `localhost:8065`, relay on `localhost:3000`, our Postgres on `localhost:5433`. |
 | `pnpm dev:down` | Stop the stack and keep its data. `pnpm dev:down --wipe` also deletes every volume and `.env`. |
-| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin) with a token written to `.env`. Relay: make the reader key a member. The test agent arrives with agent provisioning in Phase 2. |
+| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
 | `pnpm bridge` | Run the bridge against the local stack (Ctrl-C stops it cleanly) |
+| `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
+| `pnpm agent:echo [--handle echo]` | Run the echo agent, which answers mentions with "echo: ..." (no model) |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` creates about 250 Mattermost users, so it runs only when named. |
 | `pnpm typecheck` / `pnpm lint` | Static checks |
 | `pnpm test` | Unit tests (no services needed) |

@@ -27,7 +27,7 @@ If the brain already stores agent definitions, read them through an adapter and 
 One operation, safe to re-run:
 
 1. Generate a Nostr keypair and store it encrypted in the shared key store (D19).
-2. Create a Mattermost bot account (`POST /api/v4/bots`), add it to the team, create an access token for it, store the token encrypted in the same key store **(A11, confirmed)**.
+2. Create a Mattermost bot account (`POST /api/v4/bots`), add it to the team, create an access token for it, store the token encrypted in the same key store **(A11, confirmed)**. These calls use an admin user's token: Mattermost refuses bot creation to bot accounts, even system admins (D25).
 3. Register the identity with the bridge (`identity_map`, kind `agent`), which adds it to the relay as a member and publishes its profile.
 
 Disabling an agent deactivates the bot account and stops dispatch; it does not delete history.
@@ -64,7 +64,7 @@ Present chat content to the model as quoted conversation material. The agent's i
 
 1. Signal activity if supported (relay typing indicator, kind 20002, ephemeral).
 2. Call the model through a provider interface (`LlmProvider.generate`), with tool calls limited to the agent's allow-list.
-3. Publish the reply as kind 9 signed by the agent's key, with the channel tag and a reply tag pointing at the thread root. Publish through `RelayClient` using the same HTTP path the bridge uses **(A1, confirmed)**. To mention a person, use `@Display Name` in the text and a `["p", pubkey]` tag.
+3. Publish the reply as kind 9 signed by the agent's key, with the channel tag, a reply tag pointing at the thread root, and `["e", <triggering event id>, "", "mention"]`. The relay ignores that marker for threading, but a `#e` query by the triggering event finds the reply, so a restarted runtime can see which mentions it already answered. Publish through `RelayClient` using the same HTTP path the bridge uses **(A1, confirmed)**. To mention a person, use `@Display Name` in the text and a `["p", pubkey]` tag.
 4. The bridge mirrors it into Mattermost. The runtime does not post to Mattermost itself.
 
 Streaming is optional and later: publish a first partial reply, then edit events (kind 40003 `[["h", channel], ["e", reply_id]]` with the full text so far) at a throttled rate **(A4, confirmed)**. The relay allows each key 300 HTTP calls per minute by default.

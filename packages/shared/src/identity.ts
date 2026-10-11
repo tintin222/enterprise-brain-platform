@@ -4,6 +4,13 @@ import type { Queryable } from './db.ts';
 
 export const IDENTITY_MIGRATIONS_DIR = path.resolve(import.meta.dirname, '../migrations/identity');
 
+/** Names of secrets in the shared key store (D19). */
+export const secretRefs = {
+  personKey: (mmUserId: string): string => `person:${mmUserId}`,
+  agentKey: (handle: string): string => `agent:${handle}`,
+  agentToken: (mmUserId: string): string => `agent-token:${mmUserId}`,
+};
+
 export type IdentityKind = 'person' | 'agent' | 'service';
 
 export interface Identity {

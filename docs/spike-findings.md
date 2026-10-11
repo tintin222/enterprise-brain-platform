@@ -222,3 +222,13 @@ Consequence: development stays on Team Edition (far below the cap). The Phase 6 
    - NOSTR.md says kind 9009 is stored and that authors can always delete with 9005; neither is true.
 8. **Known upstream bug, untested** *(source)*: a kind 7 reaction to an event that has no channel (kind 0 or kind 1) panics the handler. The bridge only reacts to channel messages.
 9. **Size limits.** Relay content up to 262,144 bytes *(source)*; frames up to 524,288 bytes. Mattermost's post limit (about 16,000 characters) is the binding one.
+
+## Found while building Phases 1 and 2
+
+Verified against the same stack (probes in the Phase 1 and 2 work, now covered by the e2e tests).
+
+10. **`limit: 0` subscriptions.** A REQ with `limit: 0` gets `EOSE` with no stored events, and live delivery still includes events whose `created_at` is in the past (a 5-minute-old event arrived live). Live subscriptions use `limit: 0`; history comes from explicit catch-up.
+11. **A REQ for a channel the relay does not know is refused** with `CLOSED "restricted: not a channel member"`, even though open channels are otherwise readable by any member.
+12. **Membership notifications work live.** A reader subscribed to `{"kinds":[44100,44101],"#p":[<own pubkey>],"limit":0}` receives 44100 live when added to an open or a private channel. Services discover mirrored channels this way (the bridge adds the reader to every mirrored channel), plus a snapshot from `{"kinds":[39002],"#p":[<own pubkey>]}`.
+13. **Catch-up must start when a subscription is confirmed, not when it is requested.** Subscription requests are paced (40/s per connection), so with many channels a new channel's REQ can wait seconds in the queue. An event published in that gap is missed by both the live subscription and a catch-up started at request time. Running each channel's catch-up on its `EOSE` closes the gap; a probe that failed before the fix got its reply in 1.5 s after it.
+14. **Mattermost refuses bot creation to bot accounts**, even ones with the system admin role: `POST /api/v4/bots` with the @brain token returned `403 api.context.permissions.app_error`, while other admin actions work for that bot. Agent provisioning therefore uses an admin user's personal access token (D25).
