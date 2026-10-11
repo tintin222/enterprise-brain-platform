@@ -1,0 +1,15 @@
+{
+  "name": "@brain/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "nostr-tools": "2.25.2"
+  }
+}

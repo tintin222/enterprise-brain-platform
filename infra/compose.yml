@@ -1,0 +1,210 @@
+# Local development stack. Start with `pnpm dev:up` (creates .env first), stop with `pnpm dev:down`.
+#
+# Every image is pinned by tag and digest; change pins deliberately and record why in docs/decisions.md.
+# The relay services (relay, buzz-postgres, buzz-redis, buzz-s3, buzz-s3-init) are adapted from
+# block/buzz deploy/compose/compose.yml at tag relay-v0.2.1 (Apache-2.0). See infra/third_party/buzz/.
+#
+# Host ports bind to 127.0.0.1 only. The Mattermost and Buzz databases publish no host port: our code
+# never reads them (CLAUDE.md rule 5).
+
+name: enterprise-brain
+
+x-postgres-image: &postgres-image postgres:17.11-alpine3.24@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+
+x-postgres-healthcheck: &postgres-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+  interval: 5s
+  timeout: 5s
+  retries: 12
+  start_period: 10s
+
+services:
+  # --- Mattermost Team Edition ---
+  mattermost:
+    # Upstream publishes this image for linux/amd64 only; on Apple Silicon it runs under Rosetta.
+    image: mattermost/mattermost-team-edition:11.7.12@sha256:618956b80399873f5c404d5dfc21ef07c3bad1169d603108a7a14cb932af5de7
+    platform: linux/amd64
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mmuser:${MM_DB_PASSWORD:?run pnpm dev:up}@mm-postgres:5432/mattermost?sslmode=disable&connect_timeout=10
+      MM_SERVICESETTINGS_SITEURL: ${MM_URL:-http://localhost:8065}
+      # Local mode is a socket inside the container; the image's healthcheck (mmctl --local) needs it.
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_LOGSETTINGS_ENABLEDIAGNOSTICS: "false"
+    ports:
+      - "127.0.0.1:8065:8065"
+    volumes:
+      - mm-config:/mattermost/config
+      - mm-data:/mattermost/data
+      - mm-plugins:/mattermost/plugins
+      - mm-client-plugins:/mattermost/client/plugins
+    depends_on:
+      mm-postgres:
+        condition: service_healthy
+    # The image has no shell or curl; this is its own healthcheck with a shorter interval.
+    healthcheck:
+      test: ["CMD", "/mattermost/bin/mmctl", "system", "status", "--local"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  mm-postgres:
+    image: *postgres-image
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: ${MM_DB_PASSWORD:?run pnpm dev:up}
+    volumes:
+      - mm-postgres-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+    restart: unless-stopped
+
+  # --- Buzz relay (adapted from block/buzz deploy/compose/compose.yml) ---
+  relay:
+    image: ghcr.io/block/buzz:0.2.1@sha256:4e31b7c7abb7d00b6f513dc559e58d2b980416f1dc400aa01bcf762cf2989cfc
+    environment:
+      BUZZ_BIND_ADDR: 0.0.0.0:3000
+      BUZZ_HEALTH_PORT: "8080"
+      BUZZ_METRICS_PORT: "9102"
+      DATABASE_URL: postgres://buzz:${BUZZ_DB_PASSWORD:?run pnpm dev:up}@buzz-postgres:5432/buzz
+      REDIS_URL: redis://:${BUZZ_REDIS_PASSWORD:?run pnpm dev:up}@buzz-redis:6379
+      BUZZ_S3_ENDPOINT: http://buzz-s3:9000
+      BUZZ_S3_ADDRESSING_STYLE: path
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_S3_ACCESS_KEY:?run pnpm dev:up}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_S3_SECRET_KEY:?run pnpm dev:up}
+      BUZZ_S3_BUCKET: ${BUZZ_S3_BUCKET:-buzz-media}
+      BUZZ_GIT_REPO_PATH: /data/git
+      BUZZ_GIT_HOOK_HMAC_SECRET: ${BUZZ_GIT_HOOK_HMAC_SECRET:?run pnpm dev:up}
+      BUZZ_AUTO_MIGRATE: "true"
+      # Closed relay: only members may connect. The owner is the bridge service key.
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
+      RELAY_OWNER_PUBKEY: ${RELAY_OWNER_PUBKEY:?run pnpm dev:up}
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?run pnpm dev:up}
+      # Without this, /query, /count and /events accept an unauthenticated X-Pubkey header and act as
+      # that key (spike X1 read a private channel this way). It does not affect NIP-42 or NIP-98.
+      BUZZ_REQUIRE_AUTH_TOKEN: "true"
+      # The host:port of RELAY_URL names the relay's only community. Clients must send exactly this
+      # Host header (localhost:3000); any other host gets 404. Changing it later starts an empty community.
+      RELAY_URL: ${RELAY_WS_URL:-ws://localhost:3000}
+      # Default is Buzz's hosted push gateway; a dev relay has nothing to push.
+      BUZZ_PUSH_GATEWAY_DELIVERY_URL: ""
+      # Per-key rate limits (relay defaults: 300 HTTP calls/min, 10 WebSocket frames/s). Raised because
+      # the bridge, agent-runtime and ingestion share one reader key (D20 in docs/decisions.md).
+      BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN: ${BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN:-1200}
+      BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC: ${BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC:-50}
+      BUZZ_MEDIA_BASE_URL: ${RELAY_HTTP_URL:-http://localhost:3000}/media
+      RUST_LOG: buzz_relay=info,buzz_db=info,buzz_auth=info,buzz_pubsub=info,tower_http=info
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - buzz-git-data:/data/git
+    depends_on:
+      buzz-postgres:
+        condition: service_healthy
+      buzz-redis:
+        condition: service_healthy
+      buzz-s3:
+        condition: service_healthy
+      buzz-s3-init:
+        condition: service_completed_successfully
+    # The runtime image has bash but no curl, so probe /_readiness over /dev/tcp (as upstream does).
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /_readiness HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+    restart: unless-stopped
+
+  buzz-postgres:
+    image: *postgres-image
+    environment:
+      POSTGRES_DB: buzz
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: ${BUZZ_DB_PASSWORD:?run pnpm dev:up}
+    volumes:
+      - buzz-postgres-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+    restart: unless-stopped
+
+  buzz-redis:
+    image: redis:7.4.11-alpine3.21@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${BUZZ_REDIS_PASSWORD:?run pnpm dev:up}"]
+    environment:
+      REDIS_PASSWORD: ${BUZZ_REDIS_PASSWORD:?run pnpm dev:up}
+    volumes:
+      - buzz-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  # S3-compatible storage. The minio/minio and minio/mc images Buzz pinned at relay-v0.2.1 were removed
+  # from Docker Hub; Buzz main now bundles these MinIO-compatible Silo images instead.
+  buzz-s3:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BUZZ_S3_ACCESS_KEY:?run pnpm dev:up}
+      MINIO_ROOT_PASSWORD: ${BUZZ_S3_SECRET_KEY:?run pnpm dev:up}
+    volumes:
+      - buzz-s3-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  buzz-s3-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    depends_on:
+      buzz-s3:
+        condition: service_healthy
+    environment:
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_S3_ACCESS_KEY:?run pnpm dev:up}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_S3_SECRET_KEY:?run pnpm dev:up}
+      BUZZ_S3_BUCKET: ${BUZZ_S3_BUCKET:-buzz-media}
+    entrypoint: >
+      /bin/sh -euc '
+        mc alias set local http://buzz-s3:9000 "$${BUZZ_S3_ACCESS_KEY}" "$${BUZZ_S3_SECRET_KEY}"
+        mc mb --ignore-existing "local/$${BUZZ_S3_BUCKET}"
+        mc anonymous set none "local/$${BUZZ_S3_BUCKET}"
+      '
+    restart: "no"
+
+  # --- Our state (bridge, agent runtime, ingestion) ---
+  state-postgres:
+    image: *postgres-image
+    environment:
+      POSTGRES_DB: brain
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: ${STATE_DB_PASSWORD:?run pnpm dev:up}
+    ports:
+      - "127.0.0.1:${STATE_DB_PORT:-5433}:5432"
+    volumes:
+      - state-postgres-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+    restart: unless-stopped
+
+volumes:
+  mm-config:
+  mm-data:
+  mm-plugins:
+  mm-client-plugins:
+  mm-postgres-data:
+  buzz-postgres-data:
+  buzz-redis-data:
+  buzz-s3-data:
+  buzz-git-data:
+  state-postgres-data:

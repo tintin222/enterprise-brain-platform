@@ -1,0 +1,11 @@
+packages:
+  - packages/*
+  - scripts
+  - e2e
+
+# Dependencies allowed to run install scripts (pnpm blocks all others).
+allowBuilds:
+  esbuild: true
+
+# Supply-chain guard: only resolve package versions published at least 7 days ago (minutes).
+minimumReleaseAge: 10080

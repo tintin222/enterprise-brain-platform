@@ -1,0 +1,121 @@
+# Decisions, facts, assumptions and open questions
+
+Four lists. Decisions are settled unless the owner changes them here. Verified facts were read from upstream sources on 2026-10-11. The Buzz facts came from its `main` branch; Phase 0 checked the important ones against the pinned relay 0.2.1 and corrections are marked below. Assumptions A1..A12 were tested in Phase 0: results are in the table and the evidence in `docs/spike-findings.md`. The owner's questions and their answers are in section 4.
+
+## 1. Decisions
+
+| # | Decision | Why |
+| --- | --- | --- |
+| D1 | Mattermost is the chat product for people and runs unmodified. | Mature clients on web, desktop and mobile; stable API. |
+| D2 | A Buzz relay is the agent and ingestion substrate, internal only. | One signed event log for messages; per-identity keys and membership for agents. |
+| D3 | The bridge, agent runtime and ingestion are separate processes that use only public APIs. | Keeps our code out of the AGPL server and makes upgrades painless. |
+| D4 | Each person gets a custodial Nostr key held by the bridge. | The relay requires author key to equal authenticated key; agents and the audit log need real authorship. |
+| D5 | Mirroring is opt-in per channel: a channel is agent-enabled when the `@brain` bot is a member. | Clear consent signal; the bot only receives events for channels it belongs to. |
+| D6 | An agent is a Mattermost bot account plus a Nostr key. Agent replies originate on the relay and are mirrored into Mattermost. | The relay stays the system of record for what agents said, signed by the agent. |
+| D7 | Mattermost events are captured over WebSocket with REST catch-up. A server plugin is deferred. | No code inside the Mattermost process. Revisit if direct messages with agents are required (Q5). |
+| D8 | Stack: TypeScript, current Node LTS, pnpm workspaces, Postgres, Docker Compose, vitest. Suggested libraries: `nostr-tools`, `@mattermost/client`, `pg`, `zod`, `pino`. | One language across services with client libraries for both systems. Change here if the brain uses another stack (Q1). |
+| D9 | One dispatcher reads the relay with a reader key and runs agents; agents do not each hold a relay connection. Buzz's own agent harness (`buzz-acp`) is not used for product agents. | Scales to many agents; our agents are defined in the brain, not as local coding-agent processes. |
+| D10 | Pin Mattermost to the 11.7.x ESR line and the Buzz relay to one release tag chosen in Phase 0. Upgrade deliberately. | The mobile app requires server 11.7.0 or later; Buzz releases frequently. |
+| D11 | Mattermost distribution path: Team Edition container in dev, then Mostlymatter, then our own thin branded fork. | Team Edition caps users at 250; Mostlymatter removes the cap but keeps Mattermost branding. |
+| D12 | Buzz relay pinned to release 0.2.1: tag `relay-v0.2.1`, image `ghcr.io/block/buzz:0.2.1@sha256:4e31b7c7…`. Mattermost pinned to Team Edition 11.7.12 by digest. Re-run `pnpm spike` on every upgrade. | 0.2.1 is the newest relay release (2026-08-08). `main` is 98 relay commits ahead but unreleased (Q11). Relay release tags are `relay-v*`; `v*` and `desktop-v*` are the desktop app. |
+| D13 | Toolchain: Node 24.21.0, provisioned per project by pnpm (`devEngines.runtime`); pnpm 12.9.1 (`packageManager`); exact npm versions with a lockfile, and only versions at least 7 days old (`minimumReleaseAge`); TypeScript 6.0.3; ESLint 10 with type-aware typescript-eslint 8.71; vitest 5; tsx for scripts. | Reproducible without touching the machine's Node. Type-aware lint catches floating promises in async code. Rejected: TypeScript 7 (typescript-eslint supports below 6.1 only), Biome (no type-aware rules), a global Homebrew Node 24. |
+| D14 | Local stack runs on Colima (MIT) with the Docker CLI. Every image is pinned by tag and digest. The Mattermost and Buzz databases publish no host port, and host ports bind to 127.0.0.1. Relay object storage is `pgsty/silo`. | Free and open source; Docker Desktop and OrbStack need paid licences for many businesses. `minio/minio` and `minio/mc` were removed from Docker Hub, and Buzz `main` made the same switch to Silo. |
+| D15 | `pnpm dev:up` generates the service keys into `.env`. The bridge key is the relay owner (`RELAY_OWNER_PUBKEY`). `pnpm dev:seed` adds the reader key as a relay member with kind 9030. | The relay refuses to start in membership mode without the owner key, so the keys must exist before it starts. Rejected: generating keys in the seed and restarting the relay. |
+| D16 | The relay runs with `BUZZ_REQUIRE_AUTH_TOKEN=true` in every environment. Dev also sets `BUZZ_PUSH_GATEWAY_DELIVERY_URL=""`. | Without the flag, an unauthenticated `X-Pubkey` header reads as any key (spike X1). A dev relay must not call Buzz's hosted push gateway. |
+| D17 | `scripts/` may call the Mattermost and relay APIs directly, an exception to CLAUDE.md rule 6. ESLint enforces the rule for `bridge`, `agent-runtime` and `ingestion`. | Spikes and seeding exercise raw upstream behaviour, before `ChatClient` and `RelayClient` exist. |
+| D18 | The bridge chooses each relay channel id, derived from the Mattermost channel id (UUIDv5 under a fixed namespace), and sends it in the 9007 `h` tag. Applies from Phase 1. | The 9007 reply never contains the id (spike A2). Deterministic ids make creation idempotent: a retry returns `duplicate: channel already exists`. |
+| D19 | One shared key store in our state database holds every identity's secrets: custodial person keys, agent Nostr keys and agent bot tokens, all encrypted with `KEY_ENCRYPTION_KEY`. The bridge uses an agent's key to publish its profile and its bot token to post as it; agent-runtime uses the key to sign replies. | Owner asked for the simplest way (Q10): one store, one master key, and one code path for every identity. All services already trust the same database and master key. Rejected: the registry keeping agent keys and the bridge holding only public keys, which needs a second signing path for agent profiles. |
+| D20 | Our relay config raises the per-key rate limits: `BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN=1200` (default 300) and `BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC=50` (default 10, counted over 5 s). Clients still pace themselves and back off on `429` or `rate-limited:`. Spike A1 measures the configured values. Revisit with the Phase 6 load test. | The bridge, agent-runtime and ingestion share one reader key (Q12), and channel administration runs on the bridge key. At Q7 scale the defaults would stretch startup subscriptions and catch-up to minutes. The limits apply to every key, which is acceptable on a closed relay where only our services hold keys. |
+| D21 | The default `LlmProvider` uses the Anthropic Messages API through the official SDK (`@anthropic-ai/sdk`). The default model is `claude-opus-5-5`, set in configuration and overridable by an agent's `model` field. Effort is set explicitly from configuration (Opus 5.5 defaults to `medium`). Replies check `stop_reason` for refusals and use the API's server-side refusal fallback. | Owner delegated Q8. Claude Opus 5.5 is the current default Claude model; the `LlmProvider` interface keeps other providers possible. |
+| D22 | No paid Mattermost licence and no SSO: people sign in with Mattermost email and password. The 250-user cap is removed by forking when a phase needs it: the Mostlymatter build for the Phase 6 load test and staging, then our own thin fork (Phase 7). | Owner decision (Q6, Q14). The cap is code in the official builds (spike X2); Mostlymatter and our fork have none. Forking means publishing our server changes under the AGPL and replacing the Mattermost name and logo (section 5). |
+
+## 2. Verified facts
+
+### Buzz relay
+
+Sources: [README](https://github.com/block/buzz), [ARCHITECTURE.md](https://github.com/block/buzz/blob/main/ARCHITECTURE.md), [NOSTR.md](https://github.com/block/buzz/blob/main/NOSTR.md).
+
+- Apache-2.0. Self-hosted default is one relay serving one community. Needs Postgres, Redis and S3-compatible storage. A production compose bundle lives in `deploy/compose/`; the root compose file is for development. Default dev address is `ws://localhost:3000`.
+- Wire protocol is Nostr NIP-01. WebSocket connections authenticate with NIP-42. HTTP endpoints authenticate with NIP-98 (kind 27235). Media endpoints use Blossom kind 24242 instead (spike A12).
+- Ingest pipeline: authenticated, event pubkey must equal the authenticated pubkey, signature verified, channel membership checked, then stored, fanned out, indexed for search and written to a hash-chained audit log.
+- Chat message is kind 9 and must carry `["h", <channel-uuid>]`; without it the event is rejected.
+- Thread replies use `["e", <root>, "", "reply"]`; replies to unknown parents are rejected.
+- Reactions are kind 7; the channel is derived from the target event; unknown targets are rejected.
+- Deletion is kind 5, self-authored only, `e` tag required. Kind 9005 lets the author or a channel owner/admin delete.
+- Edits (kind 40003) and rich content (kind 40002) are Buzz-specific kinds.
+- Channel management: 9007 create (`name` tag, optional `visibility` and `channel_type`), 9000 add user, 9001 remove user, 9002 edit metadata, 9008 delete (owner only), 9021 join request (open channels only), 9022 leave.
+- In private channels only an owner or admin can add users. Open channels are readable and writable by non-members.
+- Relay-signed channel state: 39000 metadata, 39001 admins, 39002 members, each with `d` = channel UUID, stored channel-scoped and found by historical query.
+- Membership notifications are 44100 (added) and 44101 (removed); a subscription for them must include a `#p` filter equal to the subscriber's own pubkey.
+- Channel-scoped events are delivered only to subscriptions that name the channel in `#h`. A kinds-only subscription does not receive them. Live delivery also requires every filter of the subscription to name that one channel; a filter listing several channels gets nothing live (spike A7).
+- Profiles (kind 0) sync display name, avatar and about. NIP-05 handles not on the relay's domain are cleared.
+- Relay membership: `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`; the owner comes from `RELAY_OWNER_PUBKEY`; the relay signs with `BUZZ_RELAY_PRIVATE_KEY`. Members are managed with the `buzz-admin` CLI (`add-member`, `remove-member`, `list-members`, `generate-key`) or by owner/admin events 9030 (add), 9031 (remove), 9032 (change role).
+- HTTP endpoints: `POST /events`, `POST /query`, `POST /count`, `PUT /media/upload` (50 MB limit), `GET /media/{sha256}.{ext}`, `/health`, `/_liveness`, `/_readiness`.
+- Limits, corrected for 0.2.1 (spike A7 and NIP-11): 524,288-byte messages, 1024 subscriptions per connection, 10 filters per REQ, 1000 historical results per filter.
+- Ephemeral kinds: presence 20001, typing 20002. Search is NIP-50, one-shot, backed by Postgres full-text search.
+- Upstream known gaps: workflow approval gates fail; mobile clients and push notifications are unfinished. Correction: the claim that rate limiting is not enforced is wrong for 0.2.1, which limits each key (spike A1).
+- `buzz-cli` is a JSON-in, JSON-out CLI that reads `BUZZ_PRIVATE_KEY`. Its command list was not read; run `--help`.
+
+### Mattermost
+
+Sources: [LICENSE.txt](https://github.com/mattermost/mattermost/blob/master/LICENSE.txt), [v11 free offerings announcement](https://forum.mattermost.com/t/mattermost-v11-changes-in-free-offerings/25126), [mobile repo](https://github.com/mattermost/mattermost-mobile), [desktop repo](https://github.com/mattermost/desktop), [embedding docs](https://docs.mattermost.com/developers/integrate/customization/embedding), [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter), [Mostlymatter binaries](https://packages.framasoft.org/projects/mostlymatter/).
+
+- Server source is AGPL-3.0. Binaries compiled by Mattermost, Inc. are under an MIT licence. `server/templates/`, `server/i18n/`, `server/public/` and `webapp/` are Apache-2.0.
+- Team Edition is capped at 250 users and has no SSO. The Entry edition limits message history to 10,000; do not use it.
+- Verified on 11.7.12 (spike X2): the cap is a hard limit of 250 active users, with a warning at 200 (`GET /api/v4/limits/server`). Creating one more user fails with `api.user.create_user.user_limits.exceeded`. Bots and deactivated users do not count, and existing users keep working. Mostlymatter ("a fork of Mattermost without users limit") and our own fork with the same patch have no cap; it exists only in the official builds.
+- A fork must replace the Mattermost name and logo.
+- Mostlymatter is a drop-in replacement for the server binary (amd64, arm64) that removes the user limit and tracks upstream; v11.7.12 was published on 2026-10-08. It is under the same licence terms and keeps Mattermost's clients and branding.
+- Mobile and desktop apps are Apache-2.0. The current mobile app requires server 11.7.0 or later. Self-built mobile apps need a self-hosted push notification service.
+- Iframe embedding is disabled by default and discouraged.
+
+The Mattermost REST v4 endpoints and WebSocket event names used in the specs come from general knowledge of the API, not from a fresh reading. Confirm them against https://api.mattermost.com before use. Phase 0 exercised the ones the bridge depends on (posts, `since` catch-up, bots, tokens, roles, channel members; WebSocket `posted`, `post_edited`, `post_deleted`, `user_added`, `user_removed`) in spikes A10 and A11.
+
+## 3. Assumptions tested in Phase 0
+
+Evidence and details: `docs/spike-findings.md`. Each assumption has a spike in `scripts/spike/` (`pnpm spike A1` and so on).
+
+| # | Assumption | If it fails | Phase 0 result |
+| --- | --- | --- | --- |
+| A1 | `POST /events` accepts a per-request NIP-98 header, so one process can publish as many different keys without holding a connection per key. | Pool of short-lived WebSocket connections, one NIP-42 auth per identity. | **Holds.** Add a nonce tag (auth events are single-use); the relay limits each key to 300 HTTP calls per minute. |
+| A2 | Creating a channel with kind 9007 returns or exposes the new channel UUID; `visibility` accepts `open` and `private`; whether the client may choose the UUID. | Discover the UUID by querying kind 39000 for the name; adjust the mapping. | **Holds.** The reply never contains the UUID, but the client may choose it with an `h` tag (D18). |
+| A3 | A mention is a `["p", <pubkey>]` tag on the kind 9 event; find how Buzz writes mentions inside content. | Use whatever form the Buzz desktop client emits; adapt the dispatcher filter and the mention rewriting. | **Holds.** Content carries `@DisplayName`; mentions only arrive live on per-channel subscriptions. |
+| A4 | Exact shape of the kind 40003 edit event and of kind 40002. | Model edits as delete plus repost, or skip edits toward the relay and only re-index. | **Holds.** 40003 = `h` + `e` tags and the full new text; author only. 40002 has no schema. |
+| A5 | The relay accepts events whose `created_at` is in the past (needed for backfill and deterministic ids). | Use current time plus an `mm_ts` tag; ingestion reads the tag for the true time. | **Fails** beyond ±900 s. The alternative applies, plus a `backfill` tag and an outbox for retries (agreed; bridge-spec §5, §7). |
+| A6 | The bridge key, as relay admin, can add members with kind 9030, and as channel owner can add any member with kind 9000, including agents (check `channel_add_policy`). | Use `buzz-admin` for relay membership; adjust agent add policy. | **Holds**, also under concurrency. An agent's own `channel_add_policy` can refuse the add. |
+| A7 | One filter can list many channels in `#h`; behaviour at the 1024-subscription and 500-result limits; paging with `until`. | Shard subscriptions across connections; page more finely. | **Partly fails.** History works, live delivery does not: one subscription per channel. Cap is 1000. Page with `/query` `until` + `before_id` (agreed; bridge-spec §6, §8). |
+| A8 | Kind 0 profile fields the relay keeps, and that it accepts profiles for custodial keys. | Keep display names only in our database and resolve them ourselves. | **Holds.** The raw profile is stored as sent. |
+| A9 | Extra custom tags on kind 9 events are accepted and preserved. | Drop the provenance tag; rely on the mapping table alone. | **Holds**, and `#mm` filters work. |
+| A10 | Mattermost: the `posted` event lists mentioned user ids; a bot only receives WebSocket events for channels it belongs to; `posts?since=` returns edits and deletions; a system-admin bot can add itself to private channels. | Parse `@username` from text; adjust catch-up and reconciliation. | **Partly fails.** `mentions` lists only the receiving user, so parse `@username` (agreed; bridge-spec §5). The other three hold. |
+| A11 | Bot accounts and bot access tokens work on Team Edition 11.7.x without a licence. | Use regular user accounts flagged as agents. | **Holds.** |
+| A12 | `PUT /media/upload` auth and the URL form it returns. | Keep attachments as Mattermost permalinks only. | **Holds** with Blossom kind 24242 auth. Reads need auth too, so attachments stay Mattermost permalinks. |
+
+## 4. Questions for the owner
+
+Answered on 2026-10-12. "Owner" means the owner chose; "delegated" means the owner asked us to decide, and the answer is ours.
+
+| # | Question | Answer |
+| --- | --- | --- |
+| Q1 | What stack is the enterprise brain written in, and should these services match it? | TypeScript (D8). Owner. |
+| Q2 | How do agents get into channels: only through the brain product, or also by inviting the bot in Mattermost? | Both; reconciliation reports agents found in channels that are not enabled. Delegated. |
+| Q3 | Does the brain expose an API for search, upsert and agent definitions today? | Unknown yet: build against the `BrainClient` interface with a local stub, and write the real adapter when the brain API is available. Delegated. |
+| Q4 | When `@brain` is removed from a channel, keep or purge the mirrored history and indexed content? | Keep, stop updating, exclude from retrieval. Delegated. |
+| Q5 | Are direct messages with agents needed in v1? | No. Delegated. |
+| Q6 | How will people sign in? Open-source Mattermost has no SSO. | Mattermost email and password; SSO is not needed (D22). Owner. |
+| Q7 | Target scale: people, channels, agents, messages per day? | 500 people, 300 channels, 50 agents. Delegated. |
+| Q8 | Which model provider and model should agents use by default? | Anthropic, `claude-opus-5-5`, from configuration (D21). Delegated. |
+| Q9 | Mattermost 11.7 ships two plugins enabled by default: its own AI agents plugin (`mattermost-ai`) and Calls, which contacts a public STUN server at startup. Keep or disable them? | Keep both enabled. Owner. |
+| Q10 | Agent key custody: who holds an agent's secret key (needed to sign its profile) and its bot token? | The simplest way: one shared key store for every identity's secrets (D19). Owner. |
+| Q11 | Relay upgrades: stay on releases (0.2.1 is two months old) or pin builds of `main` by commit? | Stay on releases (D12); re-run the spikes on each upgrade. Delegated. |
+| Q12 | One reader key per service, or one shared reader key? | One shared reader key for the bridge, agent-runtime and ingestion. Owner. |
+| Q13 | Production relay rate limits. | Raised to 1200 HTTP calls per minute and 50 WebSocket frames per second per key (D20); confirm with the Phase 6 load test. Delegated. |
+| Q14 | Team Edition is capped at 250 users, below Q7's 500 people. Is there a way to increase it? | Not by configuration: it is a hard limit in the official builds (spike X2). No paid licence: the cap is removed by forking, using the Mostlymatter build for the Phase 6 load test and staging, then our own fork in Phase 7 (D11, D22). Owner. |
+
+## 5. Licence guardrails
+
+Not legal advice; a lawyer should confirm before launch.
+
+- Do not copy Mattermost server code (AGPL-3.0) into this repository. Apache-2.0 parts (`server/public/`, `webapp/`) and the published client libraries are fine as dependencies.
+- Our services talk to Mattermost only over its network API, as separate programs.
+- Any change to the Mattermost server itself lives in the separate fork repository and must be published to its users.
+- Buzz is Apache-2.0: keep licence and notice files if any of its code is copied.
+- Do not ship the Mattermost or Mostlymatter names or logos in our product.
