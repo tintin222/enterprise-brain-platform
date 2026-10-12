@@ -2,7 +2,7 @@
 # Team Edition, on the same data. Selected with `pnpm dev:up --enterprise-brain` (MATTERMOST_EDITION in .env).
 services:
   mattermost:
-    image: enterprise-brain/chat:11.7.12-eb2
+    image: enterprise-brain/chat:11.11.1-eb1
     build:
       context: ./chat
       platforms: [linux/amd64]
