@@ -223,7 +223,7 @@ describe('brain API', () => {
 
   it('exports every table as JSON Lines (NFR-9)', { timeout: 60_000 }, async () => {
     const manifest = (await json('/api/v1/brain/export/manifest')) as { format: string; tables: Record<string, number>; files: string[] };
-    expect(manifest.format).toBe('jsonl/1');
+    expect(manifest.format).toBe('jsonl/2');
     expect(manifest.files).toContain('entities.jsonl');
     const response = await call('/api/v1/brain/export/entities.jsonl');
     expect(response.headers.get('content-type')).toContain('application/x-ndjson');
