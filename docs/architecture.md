@@ -9,48 +9,52 @@ Non-goals for v1: direct messages with agents, voice, federation with outside No
 ## 2. Components
 
 ```
-            people
-              |
-   web / desktop / mobile clients
-              |
-   +----------------------+
-   |      Mattermost      |   system of record for human chat
-   +----------+-----------+
-              | REST v4 + WebSocket (bridge bot, agent bot tokens)
-   +----------+-----------+
-   |        bridge        |   mirrors both ways, owns identity and id mappings
-   +----------+-----------+
-              | Nostr: HTTP /events, /query + WebSocket
-   +----------+-----------+
-   |      Buzz relay      |   signed event log, channel membership, search, audit
-   +-----+-----------+----+
-         |           |
-+--------+------+  +-+-----------+
-| agent-runtime |  |  ingestion  |
-+--------+------+  +-+-----------+
-         |           |
-   +-----+-----------+----+
-   |   enterprise brain   |   knowledge store, retrieval, agent definitions
-   +----------------------+
+            people ──────────────────────────────────────────────┐
+              |                                                  | browser (sign-in through Mattermost OAuth)
+   web / desktop / mobile clients                                |
+              |                                                  v
+   +----------------------+   slash commands, dialogs,    +-------------+
+   |      Mattermost      |   buttons (HTTP callbacks)    |  brain-api  |  REST /api/v1/brain, pages (brain-web),
+   +----------+-----------+ ───────────────────────────>  |             |  Mattermost callbacks, embedding worker
+              | REST v4 + WebSocket (bridge bot, agent bots) +------+------+
+   +----------+-----------+                                      |
+   |        bridge        |   mirrors both ways, captures channels (D50)
+   +----------+-----------+                                      |
+              | Nostr: HTTP /events, /query + WebSocket           |
+   +----------+-----------+                                      |
+   |      Buzz relay      |   signed event log, membership, audit |
+   +-----+-----------+----+                                      |
+         |           |                                           |
++--------+------+  +-+-----------+                               |
+| agent-runtime |  |  ingestion  |                               |
++--------+------+  +-+-----------+                               |
+         |           |                                           |
+   +-----+-----------+-------------------------------------------+----+
+   |   knowledge store (packages/brain, schema brain, Postgres + pgvector) |
+   |   containers, entities, versions, links, chunks, audit, events        |
+   +------------------------------------------------------------------------+
 ```
 
 | Component | Owner | Role |
 | --- | --- | --- |
-| Mattermost | upstream, unmodified | Chat UI and API for people. Agents appear here as bot accounts. |
+| Mattermost | our build of upstream (branding and limits only, D48) | Chat UI and API for people. Agents appear here as bot accounts. Also the OAuth 2.0 provider the brain's pages sign in with (D49). |
 | Buzz relay | upstream, unmodified | Nostr relay with channels (NIP-29), per-identity membership, full-text search and a hash-chained audit log. Internal only. |
-| bridge | this repo | Mirrors agent-enabled Mattermost channels into the relay, and agent-authored relay events back into Mattermost. |
-| agent-runtime | this repo | Watches the relay for mentions of registered agents, builds context, calls the model, publishes the reply as the agent. |
-| ingestion | this repo | Reads the relay log and keeps the brain's index in step, including edits and deletions. |
-| admin API | this repo | Internal endpoints the brain product calls to create agents, enable channels and add agents to channels (`pnpm admin-api`, docs/phase7.md). |
-| enterprise brain | existing product | Knowledge store and retrieval. Reached through a `BrainClient` adapter. Until it has an API, a local stand-in in our state database takes its place (D34). |
+| bridge | this repo | Mirrors captured Mattermost channels into the relay and agent-authored relay events back. Captures every public and private channel by default (D50). |
+| agent-runtime | this repo | Watches the relay for mentions of registered agents, builds context, retrieves from the knowledge store, calls the model (`packages/models`), publishes the reply as the agent. |
+| ingestion | this repo | Reads the relay log and keeps the knowledge store's conversations in step, including edits and deletions, attributing each thread to the container that owns its channel or to General. |
+| brain-api | this repo | The Company Brain's HTTP API (`/api/v1/brain`), the pages (`packages/brain-web`), Mattermost's slash-command, dialog and button callbacks, the agent and channel routes (the former admin API, D43), the embedding worker (D49, docs/brain/). |
+| knowledge store | this repo (`packages/brain`) | Containers (Project, Topic, General), entities with versions, typed links, chunks with keyword and vector indexes, the append-only audit log (spec section 3; docs/brain/01-phase0-plan.md). Agents and ingestion reach it through `BrainClient`. |
+| models | this repo (`packages/models`) | `LlmProvider` (Anthropic, Google, echo) and `EmbeddingProvider` (Google, mock), chosen per agent from the installation config (D54, D56). |
 
 ## 3. Sources of truth
 
 | Data | Source of truth | Derived copy |
 | --- | --- | --- |
-| Human messages, channels, human membership | Mattermost | Relay events, brain index |
-| Agent-authored messages | Buzz relay (signed by the agent's key) | Mattermost posts by the agent's bot account, brain index |
-| Agent definitions (persona, tools, knowledge scope) | Enterprise brain / agent registry | none |
+| Human messages, channels, human membership | Mattermost | Relay events, conversation entities and chunks in the knowledge store |
+| Agent-authored messages in channels | Buzz relay (signed by the agent's key) | Mattermost posts by the agent's bot account, knowledge store |
+| Agents' proposals, reminders, digests, direct messages | Mattermost (posted straight by the agent's bot through the brain API, D51) | Audit log and agent runs in the knowledge store |
+| Projects, Topics, entities, versions, links, audit | Knowledge store (schema `brain`) | none; exportable (docs/brain/export-format.md) |
+| Agent definitions (persona, tools, knowledge scope) | Agent registry (`runtime.agents`) | none |
 | Identity and id mappings | Bridge state database | none |
 
 The relay must be rebuildable. If it is lost, the bridge can replay Mattermost history into a fresh relay, because agent messages also exist as Mattermost posts. Design nothing that makes the relay the only copy of a human message.
@@ -70,13 +74,19 @@ Why per-person keys instead of one bridge key: the relay requires `event.pubkey`
 
 ## 5. Key flows
 
-### 5.1 A channel becomes agent-enabled
+### 5.1 A channel is captured
 
-1. Someone invites `@brain` to a Mattermost channel (or the brain product does it through the API).
+1. The bridge's capture sweep adds `@brain` to every public and private channel it has never captured (`BRAIN_CAPTURE_CHANNELS=all`, D50); someone can also invite `@brain`, and the brain API adds it when a channel is linked to a Project or Topic.
 2. The bridge sees it joined, creates the matching relay channel, mirrors membership, and optionally backfills recent history.
-3. From then on, agents invited to the Mattermost channel are added to the relay channel.
+3. From then on, agents invited to the Mattermost channel are added to the relay channel, and ingestion turns the channel's threads into conversation entities of the container that owns the channel (or of General).
 
-Mirroring is opt-in per channel. A channel without `@brain` is never read.
+A channel someone removes `@brain` from is paused and stays out; `BRAIN_CAPTURE_CHANNELS=opt-in` restores the old invitation-only behaviour (D5). Personal direct messages are never read.
+
+### 5.4 People use the brain
+
+1. A person opens the brain's pages (`BRAIN_PUBLIC_URL`) and signs in with their chat account: Mattermost's OAuth 2.0 provider returns a code, the brain API exchanges it, learns the user id and sets its own session cookie (spike B3). Or they type `/brain search …` or `/brain link` in a channel, which Mattermost posts to the brain API with the person's id (spike B1).
+2. Every read is scoped: public conversations for everyone, private channels for their members (checked against Mattermost membership, cached briefly), a container's entities for the members of its channels, everything for administrators (FR-9.5).
+3. Search fuses keyword and vector hits over the chunks the scope allows and cites the exact post or entity version.
 
 ### 5.2 A person mentions an agent
 
@@ -110,7 +120,7 @@ Ingestion reads the same relay log with its own cursor, groups events into threa
 | Local dev | Official Team Edition container 11.7.12, pinned by digest (`infra/compose.yml`); Mostlymatter of the same version with `pnpm dev:up --mostlymatter` (D40) | Relay 0.2.1 (`relay-v0.2.1`, D12), services adapted from Buzz's `deploy/compose/` bundle |
 | Staging / production | Our own build of the same version (Enterprise Brain chat, D48); Mostlymatter remains an option | Upstream production compose bundle (`deploy/compose/` in the Buzz repo), pinned release |
 
-Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103 and the admin API 9110, all bound to 127.0.0.1.
+Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103 (bound to 127.0.0.1), and the brain API with the pages on 9120 (bound to every interface, because Mattermost in Docker calls it back at `host.docker.internal:9120`). A customer installation uses `install/` (one Compose bundle, docs in `install/README.md`).
 
 Operations (health and metrics endpoints, throttling, dead letters, key rotation, relay rebuild) are in `docs/operations.md`, the load test in `docs/load-test.md`, the security review in `docs/security-review.md`.
 

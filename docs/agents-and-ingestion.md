@@ -22,7 +22,7 @@ An agent is a product object that users create in the enterprise brain. The runt
 
 If the brain already stores agent definitions, read them through an adapter and keep only the chat-specific fields (keys, bot ids) in our database.
 
-As built, agent-runtime re-reads the registry every `AGENT_REFRESH_SECONDS` (30), and at once when a message names a key it does not know (at most every 2 seconds), so an agent created through the admin API answers its first mention (D47).
+As built, agent-runtime re-reads the registry every `AGENT_REFRESH_SECONDS` (30), and at once when a message names a key it does not know (at most every 2 seconds), so an agent created through the brain API answers its first mention (D47).
 
 ### A.2 Provisioning an agent
 
@@ -104,7 +104,7 @@ interface BrainClient {
 
 The default `LlmProvider` implementation uses the Anthropic Messages API through the official SDK (`@anthropic-ai/sdk`). The model id comes from configuration, default `claude-opus-5-5`, and an agent's `model` field overrides it; the API key comes from the environment (D21). Set effort explicitly, check `stop_reason` for refusals, and enable the API's server-side refusal fallback. Confirm current model identifiers and API details against the provider's documentation at build time.
 
-If the brain has no API yet, implement `BrainClient` against a local Postgres table with vector search behind the same interface, so the rest of the system does not change later. As built: `PostgresBrainClient` (schema `brain`) uses Postgres full-text search instead of vectors, because no embeddings provider is configured (D34).
+As built: `PostgresBrainClient` in `packages/brain` implements `BrainClient` over the knowledge store (schema `brain`, docs/brain/01-phase0-plan.md): thread documents become conversation entities and chunks, and `search` is hybrid (keyword and vector, D52, D53) within the D35 scope. The `LlmProvider` and `EmbeddingProvider` implementations live in `packages/models` (D54).
 
 ## Part B: Ingestion
 

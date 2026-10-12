@@ -11,10 +11,11 @@ Each service serves an operations endpoint on `OPS_HOST` (default `127.0.0.1`):
 | bridge | `pnpm bridge` | `BRIDGE_OPS_PORT` (9101) | database, Mattermost WebSocket, relay WebSocket |
 | agent-runtime | `pnpm agent-runtime` | `RUNTIME_OPS_PORT` (9102) | database, relay WebSocket |
 | ingestion | `pnpm ingestion` | `INGESTION_OPS_PORT` (9103) | database, relay WebSocket |
+| brain-api | `pnpm brain-api` | `BRAIN_API_PORT` (9120), on `BRAIN_API_HOST` (every interface); the same port serves the API, the pages and Mattermost's callbacks | database, Mattermost (the bot's token) |
 
 - `GET /healthz`: 200 while the process runs (liveness).
 - `GET /readyz`: 200 with `{"ready":true,"checks":{...}}` when every dependency answers, otherwise 503 (readiness).
-- `GET /metrics`: Prometheus text. It holds counts and timings only, never message content.
+- `GET /metrics`: Prometheus text. It holds counts and timings only, never message content. On the brain API, whose port is public, it needs `Authorization: Bearer $BRAIN_API_TOKEN` (or an administrator's session).
 
 Metrics worth alerting on:
 
@@ -30,8 +31,12 @@ Metrics worth alerting on:
 | `brain_runtime_reply_seconds` | Mention to published reply | p95 above your target (D38) |
 | `brain_ingestion_pending_threads` | Threads waiting to be indexed | growing |
 | `brain_ingestion_index_lag_seconds` | First change of a thread to its indexing | p95 above debounce + 15 s |
+| `brain_embed_pending` | Chunks waiting for an embedding (brain-api's worker) | growing for minutes: the embedding provider is down or the key is wrong (`brain_embed_chunks_total{outcome="error"}`) |
+| `brain_bridge_channels_opted_out` | Channels `@brain` was removed from, which the capture sweep leaves alone (D50) | informational |
 
-Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4); with `ENV_FILE=.env.staging` and `--env-only` it checks staging's logs against staging's secrets (docs/staging.md).
+Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted; the brain API logs one line per request without the query string. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4); with `ENV_FILE=.env.staging` and `--env-only` it checks staging's logs against staging's secrets (docs/staging.md). `pnpm check:secrets [paths]` scans the repository (or the given files) for key shapes, secret assignments and known values; CI runs it on every push (`.secretsignore` lists deliberate false positives).
+
+The brain API also answers `GET /openapi.json` (the document behind `docs/brain/API.md`), and `pnpm brain:bench` measures search latency on synthetic data (NFR-1; `docs/brain/gates/phase-0.md`).
 
 ## 2. Write throttling
 
@@ -63,7 +68,10 @@ Replay behaviour: a relay event is handled again. A signed event from the outbox
 | `READER_SECRET_KEY` | Environment | All services (shared reader, Q12) | `pnpm keys:rotate-reader` |
 | `MM_BRIDGE_TOKEN` | Environment | Bridge (`@brain`) | New token, swap, revoke (below) |
 | `MM_ADMIN_TOKEN` | Environment | Agent provisioning only (D25) | New token, swap, revoke |
-| `ANTHROPIC_API_KEY` | Environment | agent-runtime | Provider console |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Environment | agent-runtime, brain-api (embeddings) | Provider console |
+| `BRAIN_API_TOKEN` | Environment | brain-api (machine clients: scripts, staging tools, tests) | New value in the environment; restart brain-api |
+| `BRAIN_SESSION_SECRET` | Environment | brain-api (session cookies and callback states) | New value; every browser session and open dialog ends |
+| OAuth client secret, `/brain` command tokens | Key store (`brain:oauth:client-secret`, `brain:command:<team>:brain`) | brain-api | `pnpm brain:setup` recreates what Mattermost no longer has |
 | `BUZZ_RELAY_PRIVATE_KEY`, database and Redis passwords | Environment of the stack | Relay and databases | Change and restart the stack (`pnpm dev:up`) |
 
 **The master key.** It protects every custodial and agent key and every agent bot token. Keep it only in the environment or a secret manager with versioned backups, never in the repository, in logs or in tickets. Losing it loses every person's and agent's relay identity: new keys would mean new authors on the relay, and every agent must be provisioned again. Back it up when it is created and after each rotation.

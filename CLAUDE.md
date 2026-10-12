@@ -6,11 +6,11 @@ Guide for AI coding agents working in this repository. Read this file fully, the
 
 Team chat with AI agents as channel participants, built for an "enterprise brain" product: a system that stores a company's knowledge and lets users create agents.
 
-- **Mattermost** is the chat product people use: channels, threads, web, desktop and mobile clients. It is the system of record for human messages.
+- **Mattermost** is the chat product people use: channels, threads, web, desktop and mobile clients. It is the system of record for human messages. We run our own build of it (Enterprise Brain chat, D48: branding and the user limit only).
 - **A Buzz relay** (https://github.com/block/buzz) is the agent and ingestion substrate. Every mirrored message is a signed Nostr event in one log, and every agent has its own keypair.
-- **This repository** holds the glue we own: the bridge, the agent runtime and the ingestion service.
+- **This repository** holds what we own: the bridge, the agent runtime, the ingestion service, the knowledge store (`packages/brain`), the brain API with its pages (`packages/brain-api`, `packages/brain-web`), the model providers (`packages/models`) and the installation bundle (`install/`).
 
-We do not modify Mattermost or Buzz source code in this repository. Both run as unmodified upstream services that we talk to over their public APIs.
+We do not modify Mattermost or Buzz source code in this repository. Both run as upstream services (Mattermost with our thin branding build) that we talk to over their public APIs.
 
 Since 2026-10-12 the product is being extended into the **Company Brain** described in `docs/COMPANY_BRAIN_SPEC.md`: Projects and Topics as the two top-level containers, a knowledge model with entities, versions and links, three agents (Analyst, Follow-up, Packager) and a development package for Claude Code. See "Company Brain conventions" below.
 
@@ -69,21 +69,29 @@ docs/                  specs and decisions; COMPANY_BRAIN_SPEC.md is the owner's
 infra/                 Docker Compose for the local stack (Mattermost, Buzz relay, databases)
   chat/                image with our own Mattermost build, Enterprise Brain chat (compose.chat.yml selects it, D48)
   mostlymatter/        image with the uncapped Mostlymatter build (compose.mostlymatter.yml selects it)
-  services/            one image for the bridge, agent-runtime, ingestion and admin API (staging, docs/staging.md)
+  services/            one image for the bridge, agent-runtime, ingestion and the brain API with its pages (install, staging)
   staging/             one-line Dockerfiles that keep staging's third-party images pinned on Railway
   third_party/buzz/    licence and notice for the compose services adapted from Buzz
+  state-postgres/      our state database image: the pinned Postgres with pgvector compiled in (D52)
+install/               a customer installation: Compose bundle, installer wrapper, TLS, the clean-install test (install/README.md)
 packages/
-  shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, local brain
-  bridge/              Mattermost <-> Buzz mirror, dead-letter tool (third_party/: emoji-datasource notice)
-  agent-runtime/       agent registry, dispatcher, context assembly, LLM calls, admin API
-  ingestion/           relay -> brain indexing, purge tool
+  shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, BrainClient seam
+  models/              LlmProvider (Anthropic, Google, echo) and EmbeddingProvider (Google, mock) (D54)
+  brain/               the knowledge store: migrations, repositories, access scopes, hybrid search, export (docs/brain/)
+  brain-api/           the brain's HTTP API, pages host, Mattermost callbacks, sign-in, embedding worker, Mattermost setup
+  brain-web/           the pages (React, Vite, FormatJS catalog in src/i18n/en.json)
+  bridge/              Mattermost <-> Buzz mirror, capture sweep (D50), dead-letter tool (third_party/: emoji-datasource notice)
+  agent-runtime/       agent registry, dispatcher, context assembly, provisioning
+  ingestion/           relay -> knowledge store (conversation entities), purge tool
 scripts/
   lib/                 env file, Mattermost and relay helpers for scripts
   dev/                 dev:up, dev:down, dev:seed
-  spike/               one spike per assumption plus the Phase 0 acceptance checks
+  brain/               brain:bench (NFR-1 measurement)
+  install/             the installer that runs inside the services image (init, seed, selftest)
+  spike/               one spike per assumption plus the Phase 0 acceptance checks; B1-B6 for the brain
   gen/                 generated sources (emoji table)
   keys/                key rotation
-  ops/                 relay wipe and rebuild, log secret check
+  ops/                 relay wipe and rebuild, log secret check, repository secret check
   load/                Phase 6 load test
   staging/             staging on Railway: setup and agent creation
 e2e/                   end-to-end tests against the local stack
@@ -100,22 +108,27 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | --- | --- |
 | `pnpm dev:up [--enterprise-brain \| --mostlymatter \| --team-edition]` | Create `.env` from `.env.example` if needed (generates service keys and secrets, never overwrites existing values), then start the stack and wait until it is healthy. Mattermost on `localhost:8065`, relay on `localhost:3000`, our Postgres on `localhost:5433`. `--enterprise-brain` switches to our own build (no user cap, our branding, D48) and `--mostlymatter` to Framasoft's (both need `docker-buildx`); `--team-edition` switches back. |
 | `pnpm dev:down` | Stop the stack and keep its data. `pnpm dev:down --wipe` also deletes every volume and `.env`. |
-| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, apply the Enterprise Brain name and logo (D44), create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
+| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, apply the Enterprise Brain name and logo (D44), create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`, and register the brain (allow-list, OAuth app, `/brain` command). Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
 | `pnpm bridge` | Run the bridge against the local stack (Ctrl-C stops it cleanly) |
-| `pnpm agent-runtime` | Run the agent runtime (dispatcher and job runner). Agents with model `echo` answer without a model; others need `ANTHROPIC_API_KEY`. |
-| `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
+| `pnpm agent-runtime` | Run the agent runtime (dispatcher and job runner). Agents with model `echo` answer without a model; others need `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` (per agent: `provider`). |
+| `pnpm agent:provision --handle <h> --name "<Name>" [--provider anthropic\|google\|echo] [--model <id>]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
 | `pnpm agent:echo [--handle echo]` | Run the echo agent, which answers mentions with "echo: ..." (no model) |
-| `pnpm ingestion` | Run ingestion, which keeps the local brain (D34) in step with the relay; agents search it |
-| `pnpm admin-api` | Internal API for the brain product: create agents, enable channels, add agents to channels (docs/phase7.md) |
+| `pnpm ingestion` | Run ingestion, which keeps the knowledge store's conversations in step with the relay; agents search it |
+| `pnpm brain-api` | Run the brain API, the pages and the embedding worker on `localhost:9120` (docs/brain/01-phase0-plan.md). Needs `pnpm dev:seed` once, which registers the brain with Mattermost |
+| `pnpm brain:setup` | Register the brain with Mattermost again (allow-list, OAuth app, `/brain` command); idempotent |
+| `pnpm brain:api-docs [--check]` | Regenerate `docs/brain/API.md` from the routes (CI checks it is current) |
+| `pnpm brain:bench [--chunks N] [--clean]` | Seed synthetic chunks and measure search latency (NFR-1) |
+| `./install/brain init \| up \| status \| test` | A customer installation from a machine with only Docker (install/README.md); `test` is the clean-install gate |
 | `pnpm ingest:purge --channel <relay channel id> \| --author <pubkey>` | Remove a channel's or an author's content from the brain and keep it out |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` (Team Edition's cap) and `X3` (no cap) create about 250 Mattermost users, so they run only when named. |
 | `pnpm dead-letter list \| show <id> \| replay <id...> \| replay --all` | Inspect and replay what the bridge gave up on (docs/operations.md section 3) |
 | `pnpm keys:rotate-master`, `keys:rotate-reader [--finish]`, `keys:rotate-bridge [--finish]` | Rotate the master key, the reader key or the bridge key (docs/operations.md section 4) |
 | `pnpm relay:wipe --yes`, `pnpm relay:rebuild` | Empty the local relay; prepare our services to rebuild it from Mattermost (docs/operations.md section 5) |
 | `pnpm check:logs [--env-only] <files>` | Fail if any secret from `.env` (or `ENV_FILE`) or the key store appears in log files; `--env-only` skips the key store |
+| `pnpm check:secrets [paths]` | Fail if a plaintext secret sits in the repository, a fixture or a test output (key shapes, secret assignments, known values); CI runs it |
 | `pnpm load-test` | The Phase 6 load test at Q7 scale, on Mostlymatter with the three services running (docs/load-test.md) |
-| `pnpm staging:railway [step ...]` | Create or update staging on Railway (docs/staging.md); secrets live in `.env.staging`. Steps: `env`, `services`, `data`, `relay`, `mattermost`, `seed`, `app` |
-| `pnpm staging:agent --handle <h> --name "<Name>" [--model echo]` | Create or update an agent on staging through the admin API, from a temporary Railway sandbox |
+| `pnpm staging:railway [step ...] [--service <name>]` | Create or update staging on Railway (docs/staging.md); secrets live in `.env.staging`. Steps: `env`, `services`, `data`, `relay`, `mattermost`, `seed`, `app`, `setup` |
+| `pnpm staging:agent --handle <h> --name "<Name>" [--provider anthropic\|google\|echo] [--model <id>]` | Create or update an agent on staging through the brain API, from a temporary Railway sandbox |
 | `pnpm gen:emoji` | Regenerate the bridge's reaction emoji table from the pinned emoji-datasource (D31) |
 | `pnpm typecheck` / `pnpm lint` | Static checks |
 | `pnpm test` | Unit tests (no services needed) |

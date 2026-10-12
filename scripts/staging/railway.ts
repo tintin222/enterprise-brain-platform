@@ -8,15 +8,22 @@
 //   relay       deploy the relay
 //   mattermost  deploy Mattermost (our own build, Enterprise Brain chat; D48)
 //   seed        run pnpm dev:seed against the public address and check that nobody else holds an account
-//   app         store the seed's tokens and deploy the bridge, agent-runtime, ingestion and admin API
+//   app         store the seed's tokens and deploy the bridge, agent-runtime, ingestion and the brain API
+//   setup       register the brain with Mattermost (allow-list, OAuth app, /brain) through the brain API, from a sandbox
+// `--service <name>` limits the deploying steps to one service, e.g. `pnpm staging:railway data --service state-postgres`.
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { ensureEnvFile, envPath, readEnvFile, repoRoot, updateEnvFile, type EnvValues } from '../lib/env.ts';
+import { parseArgs } from 'node:util';
+import { ensureEnvFile, envPath, readEnvFile, removeFromEnvFile, repoRoot, updateEnvFile, type EnvValues } from '../lib/env.ts';
 import { MattermostApi, type MmUser } from '../lib/mattermost.ts';
+import { brainApiFromSandbox, STAGING_BRAIN_API } from '../lib/railway-sandbox.ts';
 
 const PROJECT = 'enterprise-brain-staging';
 const ENVIRONMENT = 'production';
-const STEPS = ['env', 'services', 'data', 'relay', 'mattermost', 'seed', 'app'] as const;
+const STEPS = ['env', 'services', 'data', 'relay', 'mattermost', 'seed', 'app', 'setup'] as const;
+/** Services that no longer exist; the services step deletes them on Railway. */
+const RETIRED_SERVICES = ['admin-api'];
+const RETIRED_KEYS = ['ADMIN_API_PORT', 'ADMIN_API_TOKEN'];
 type Step = (typeof STEPS)[number];
 
 if (!envPath.endsWith('.env.staging')) throw new Error('Run this through `pnpm staging:railway`, which sets ENV_FILE=.env.staging.');
@@ -48,16 +55,19 @@ function pick(env: EnvValues, keys: string[]): Record<string, string> {
 
 const internal = (service: string, port: number): string => `${service}.railway.internal:${port}`;
 
+// Railway mounts each volume with a lost+found directory at its root, so the cluster lives in a subdirectory.
 const postgres = (name: string, database: string, user: string, passwordKey: string, dir = 'infra/staging/postgres'): ServiceSpec => ({
   name,
   dir,
   volume: '/var/lib/postgresql/data',
-  variables: (env) => ({ POSTGRES_DB: database, POSTGRES_USER: user, POSTGRES_PASSWORD: need(env, passwordKey) }),
+  variables: (env) => ({ POSTGRES_DB: database, POSTGRES_USER: user, POSTGRES_PASSWORD: need(env, passwordKey), PGDATA: '/var/lib/postgresql/data/pgdata' }),
 });
 
 // Every service of ours gets only the settings its configuration schema reads (MM_ADMIN_TOKEN only reaches the
-// admin API, security review S5).
-const COMMON = ['LOG_LEVEL', 'STATE_DATABASE_URL', 'KEY_ENCRYPTION_KEY', 'OPS_HOST', 'RELAY_HTTP_URL', 'RELAY_WS_URL', 'READER_SECRET_KEY', 'RELAY_REQUESTS_PER_SECOND', 'MM_URL', 'MM_REQUESTS_PER_SECOND'];
+// brain API, security review S5).
+const COMMON = ['LOG_LEVEL', 'STATE_DATABASE_URL', 'KEY_ENCRYPTION_KEY', 'OPS_HOST', 'RELAY_HTTP_URL', 'RELAY_WS_URL', 'READER_SECRET_KEY', 'RELAY_REQUESTS_PER_SECOND', 'MM_URL', 'MM_API_URL', 'MM_REQUESTS_PER_SECOND'];
+// Model access (packages/models): agent-runtime for agents' answers, the brain API for embeddings.
+const MODEL_KEYS = ['LLM_PROVIDER', 'ANTHROPIC_API_KEY', 'LLM_MODEL', 'LLM_EFFORT', 'LLM_MAX_TOKENS', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MODEL_FAST', 'EMBEDDING_PROVIDER', 'EMBEDDING_MODEL', 'EMBEDDING_DIMENSIONS', 'EMBEDDING_MAX_DISTANCE', 'MODEL_PRICES_JSON'];
 const app = (name: string, program: string, portKey: string, healthPath: string, keys: string[]): ServiceSpec => ({
   name,
   dockerfilePath: 'infra/services/Dockerfile',
@@ -133,7 +143,7 @@ const MATTERMOST: ServiceSpec = {
 };
 
 const APPS: ServiceSpec[] = [
-  app('bridge', 'packages/bridge/src/main.ts', 'BRIDGE_OPS_PORT', '/readyz', ['MM_BRIDGE_TOKEN', 'BRIDGE_SECRET_KEY', 'BACKFILL_DAYS', 'RELAY_OVERLAP_SECONDS', 'CATCH_UP_INTERVAL_SECONDS', 'RECONCILE_INTERVAL_SECONDS']),
+  app('bridge', 'packages/bridge/src/main.ts', 'BRIDGE_OPS_PORT', '/readyz', ['MM_BRIDGE_TOKEN', 'BRIDGE_SECRET_KEY', 'BACKFILL_DAYS', 'RELAY_OVERLAP_SECONDS', 'CATCH_UP_INTERVAL_SECONDS', 'RECONCILE_INTERVAL_SECONDS', 'BRAIN_CAPTURE_CHANNELS', 'CAPTURE_SWEEP_SECONDS']),
   app('agent-runtime', 'packages/agent-runtime/src/main.ts', 'RUNTIME_OPS_PORT', '/readyz', [
     'MAX_EVENT_AGE_SECONDS',
     'RELAY_OVERLAP_SECONDS',
@@ -142,15 +152,37 @@ const APPS: ServiceSpec[] = [
     'JOB_CONCURRENCY',
     'AGENT_REFRESH_SECONDS',
     'CONTEXT_CHAR_BUDGET',
-    'ANTHROPIC_API_KEY',
-    'LLM_MODEL',
-    'LLM_EFFORT',
-    'LLM_MAX_TOKENS',
+    ...MODEL_KEYS,
   ]),
   app('ingestion', 'packages/ingestion/src/main.ts', 'INGESTION_OPS_PORT', '/readyz', ['INGEST_DEBOUNCE_SECONDS', 'INGEST_CHUNK_CHARS', 'RELAY_OVERLAP_SECONDS', 'CATCH_UP_INTERVAL_SECONDS']),
-  app('admin-api', 'packages/agent-runtime/src/cli/admin-api.ts', 'ADMIN_API_PORT', '/healthz', ['MM_ADMIN_TOKEN', 'MM_TEAM_NAME', 'BRIDGE_SECRET_KEY', 'MM_BRIDGE_TOKEN', 'ADMIN_API_TOKEN']),
+  // The brain API serves browsers (public domain, BRAIN_PUBLIC_URL) and Mattermost's callbacks (BRAIN_INTERNAL_URL);
+  // the pages come built in the image (BRAIN_WEB_DIR is set there).
+  app('brain-api', 'packages/brain-api/src/main.ts', 'BRAIN_API_PORT', '/readyz', [
+    'MM_BRIDGE_TOKEN',
+    'MM_ADMIN_TOKEN',
+    'MM_TEAM_NAME',
+    'BRIDGE_SECRET_KEY',
+    'BRAIN_API_HOST',
+    'BRAIN_PUBLIC_URL',
+    'BRAIN_INTERNAL_URL',
+    'BRAIN_API_TOKEN',
+    'BRAIN_SESSION_SECRET',
+    'BRAIN_SESSION_HOURS',
+    'BRAIN_TIMEZONE',
+    'BRAIN_FEATURE_API',
+    'BRAIN_FEATURE_CHAT_COMMANDS',
+    'BRAIN_FEATURE_SEMANTIC_SEARCH',
+    'EMBED_INTERVAL_SECONDS',
+    'EMBED_BATCH_SIZE',
+    ...MODEL_KEYS,
+  ]),
 ];
-const PORT_KEYS: Record<string, string> = { bridge: 'BRIDGE_OPS_PORT', 'agent-runtime': 'RUNTIME_OPS_PORT', ingestion: 'INGESTION_OPS_PORT', 'admin-api': 'ADMIN_API_PORT' };
+const PORT_KEYS: Record<string, string> = { bridge: 'BRIDGE_OPS_PORT', 'agent-runtime': 'RUNTIME_OPS_PORT', ingestion: 'INGESTION_OPS_PORT', 'brain-api': 'BRAIN_API_PORT' };
+/** Services with a public address: the target port and the .env.staging key that holds the address. */
+const PUBLIC: Record<string, { port: (env: EnvValues) => number; key: string }> = {
+  mattermost: { port: () => 8065, key: 'MM_URL' },
+  'brain-api': { port: (env) => Number(need(env, 'BRAIN_API_PORT')), key: 'BRAIN_PUBLIC_URL' },
+};
 
 const ALL: ServiceSpec[] = [...DATA, RELAY, MATTERMOST, ...APPS];
 
@@ -234,16 +266,25 @@ const STAGING_VALUES: EnvValues = {
   OPS_HOST: '::',
   MM_TEAM_NAME: 'enterprise-brain',
   MM_TEAM_DISPLAY_NAME: 'Enterprise Brain',
+  // Our services call Mattermost over the private network; MM_URL (public) stays for links and sign-in (D58).
+  MM_API_URL: `http://${internal('mattermost', 8065)}`,
+  // The brain API listens on IPv6 too: Railway's private network is IPv6 and its public proxy reaches it there as well.
+  BRAIN_API_HOST: '::',
+  BRAIN_INTERNAL_URL: STAGING_BRAIN_API,
 };
 
 function stepEnv(): void {
   const { created, generated } = ensureEnvFile();
   for (const [key, value] of Object.entries(STAGING_VALUES)) if (readEnvFile()[key] !== value) updateEnvFile(key, value);
+  for (const key of RETIRED_KEYS) if (readEnvFile()[key] !== undefined) removeFromEnvFile(key);
   console.log(`${created ? 'Created' : 'Checked'} .env.staging${generated.length > 0 ? `; generated ${generated.join(', ')}` : ''}`);
 }
 
-async function ensureDomain(ctx: Context): Promise<void> {
-  const id = serviceId(ctx, MATTERMOST.name);
+/** A Railway-provided HTTPS address for a public service, recorded in .env.staging. */
+async function ensureDomain(ctx: Context, name: string, env: EnvValues): Promise<void> {
+  const spec = PUBLIC[name];
+  if (!spec) throw new Error(`${name} has no public address`);
+  const id = serviceId(ctx, name);
   const { domains } = await api<{ domains: { serviceDomains: { domain: string }[] } }>(
     'query($projectId: String!, $environmentId: String!, $serviceId: String!) { domains(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) { serviceDomains { domain } } }',
     { projectId: ctx.projectId, environmentId: ctx.environmentId, serviceId: id },
@@ -252,12 +293,12 @@ async function ensureDomain(ctx: Context): Promise<void> {
   if (!domain) {
     const created = await api<{ serviceDomainCreate: { domain: string } }>(
       'mutation($input: ServiceDomainCreateInput!) { serviceDomainCreate(input: $input) { domain } }',
-      { input: { environmentId: ctx.environmentId, serviceId: id, targetPort: 8065 } },
+      { input: { environmentId: ctx.environmentId, serviceId: id, targetPort: spec.port(env) } },
     );
     domain = created.serviceDomainCreate.domain;
-    console.log(`Created Mattermost's public address https://${domain}`);
+    console.log(`Created the public address of ${name}: https://${domain}`);
   }
-  if (readEnvFile().MM_URL !== `https://${domain}`) updateEnvFile('MM_URL', `https://${domain}`);
+  if (readEnvFile()[spec.key] !== `https://${domain}`) updateEnvFile(spec.key, `https://${domain}`);
 }
 
 async function configure(ctx: Context, spec: ServiceSpec, env: EnvValues): Promise<void> {
@@ -298,8 +339,14 @@ async function stepServices(): Promise<void> {
       console.log(`Created service ${spec.name}`);
     }
   }
+  for (const name of RETIRED_SERVICES) {
+    const id = ctx.services.get(name);
+    if (!id) continue;
+    await api('mutation($id: String!, $environmentId: String) { serviceDelete(id: $id, environmentId: $environmentId) }', { id, environmentId: ctx.environmentId });
+    console.log(`Deleted the retired service ${name}`);
+  }
   ctx = await context();
-  await ensureDomain(ctx);
+  for (const name of Object.keys(PUBLIC)) await ensureDomain(ctx, name, readEnvFile());
   const env = readEnvFile();
   // Our services need the seed's tokens; until the seed has run they are configured in the app step.
   for (const spec of ALL) if (!APPS.includes(spec) || env.MM_BRIDGE_TOKEN) await configure(ctx, spec, env);
@@ -341,14 +388,24 @@ async function deploy(ctx: Context, spec: ServiceSpec): Promise<void> {
   console.log(`Deployed ${spec.name} in ${Math.round((Date.now() - started) / 1000)} s`);
 }
 
-async function deployAll(specs: ServiceSpec[]): Promise<void> {
-  const ctx = await context();
-  await Promise.all(specs.map((spec) => deploy(ctx, spec)));
+/** The services a deploying step touches: all of the step's, or the one named with --service. */
+function selected(specs: ServiceSpec[]): ServiceSpec[] {
+  if (!only) return specs;
+  const spec = specs.find((candidate) => candidate.name === only);
+  if (!spec) throw new Error(`--service ${only} is not one of this step's services (${specs.map((candidate) => candidate.name).join(', ')})`);
+  return [spec];
 }
 
+async function deployAll(specs: ServiceSpec[]): Promise<void> {
+  const ctx = await context();
+  await Promise.all(selected(specs).map((spec) => deploy(ctx, spec)));
+}
+
+// The seed skips what this machine cannot reach: the relay (the bridge grants the membership, D45) and the state
+// database (the setup step registers the brain through the brain API instead).
 function seed(): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/dev/seed.ts', '--skip-relay'], { cwd: repoRoot, stdio: 'inherit', env: process.env });
+    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/dev/seed.ts', '--skip-relay', '--skip-brain'], { cwd: repoRoot, stdio: 'inherit', env: process.env });
     child.on('error', reject);
     child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`pnpm dev:seed exited with ${code}`))));
   });
@@ -375,11 +432,19 @@ async function checkAccounts(env: EnvValues): Promise<void> {
 async function stepApp(): Promise<void> {
   const ctx = await context();
   const env = readEnvFile();
-  for (const spec of APPS) await configure(ctx, spec, env);
+  for (const spec of selected(APPS)) await configure(ctx, spec, env);
   await deployAll(APPS);
 }
 
-const requested = process.argv.slice(2);
+/** Mattermost's side of the brain (allow-list, OAuth app, /brain), through the brain API on the private network. */
+async function stepSetup(): Promise<void> {
+  const out = await brainApiFromSandbox('POST', '/setup/mattermost');
+  console.log(out);
+  if (!/HTTP 200$/.test(out)) throw new Error('The brain setup did not answer 200; see `railway logs --service brain-api`');
+}
+
+const { values: flags, positionals: requested } = parseArgs({ options: { service: { type: 'string' } }, allowPositionals: true });
+const only = flags.service;
 for (const name of requested) if (!STEPS.includes(name as Step)) throw new Error(`Unknown step ${name}; steps: ${STEPS.join(', ')}`);
 const steps: Step[] = requested.length > 0 ? (requested as Step[]) : [...STEPS];
 
@@ -395,5 +460,6 @@ for (const step of steps) {
     await checkAccounts(readEnvFile());
   }
   if (step === 'app') await stepApp();
+  if (step === 'setup') await stepSetup();
 }
-console.log(`Done: ${steps.join(', ')}. Mattermost: ${readEnvFile().MM_URL ?? '(no address yet)'}`);
+console.log(`Done: ${steps.join(', ')}. Mattermost: ${readEnvFile().MM_URL ?? '(no address yet)'}; brain: ${readEnvFile().BRAIN_PUBLIC_URL ?? '(no address yet)'}`);

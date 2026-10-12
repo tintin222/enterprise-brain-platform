@@ -24,7 +24,8 @@ Scope: the prompt path (chat content to model to reply), private-channel retriev
 | R4 | Documents must not snapshot membership. | Holds. Documents store the channel id only; visibility and active state are channel facts looked up at query time. |
 | R5 | Agents act only where they are members. | Holds. The runtime checks relay channel membership (kind 39002), which the bridge mirrors from Mattermost; an agent bot outside a channel is not a relay member there and is not triggered (e2e). Bots in channels without `@brain` are reported by reconciliation (Q2). |
 | R6 | Only agents' relay events flow back to Mattermost. | Holds. The bridge mirrors relay events to Mattermost only when their author is a registered agent identity. A person's custodial key, if stolen, cannot post into Mattermost through the bridge. |
-| R7 | Search input. | Holds. Queries are parameterized SQL; the full-text query is built from the database's own lexemes with `quote_literal` (`brain-postgres.ts`). |
+| R7 | Search input. | Holds. Queries are parameterized SQL; the full-text query is built from the database's own lexemes with `quote_literal` (`packages/brain/src/search.ts`); the vector is passed as a parameter. |
+| R8 | The brain API's access (Phase 0). | Holds, with a window. A person's channel list comes from Mattermost through the bot's token and is cached 20 s (`packages/brain-api/src/access.ts`), so a membership change shows in search within that time; private content is filtered in SQL by relay channel id, container entities by the containers of the person's channels, and administrators see everything. Cookie-authenticated writes need `X-Requested-With`; Mattermost's callbacks are verified by the command token and by signed states. The e2e test "a private channel's conversation is visible to its members only" covers it. |
 
 ## 3. Secrets
 
@@ -36,4 +37,4 @@ Scope: the prompt path (chat content to model to reply), private-channel retriev
 | S4 | A removed relay member keeps an already open socket (spike A6). | Accepted, documented. After removing a reader or agent key, restart what may hold its socket (docs/operations.md section 4). |
 | S5 | `MM_ADMIN_TOKEN` is a system admin token. | Accepted for now. Mattermost has no narrower permission for bot creation (D25). Only agent provisioning uses it; keep it out of the services that run continuously, and rotate it like the bridge token. |
 | S6 | Dead-letter payloads can contain message text. | Accepted. They live in our state database, and `pnpm dead-letter list` prints no message text; `show` does, for an operator. |
-| S7 | Operations endpoints. | Holds. They bind to 127.0.0.1 by default and expose counts and timings only, with no content, names or tokens. |
+| S7 | Operations endpoints. | Holds. They bind to 127.0.0.1 by default and expose counts and timings only, with no content, names or tokens. The brain API shares its public port with its pages, so its `/metrics` needs the service token or an administrator's session (`/healthz` and `/readyz` stay open for the platform's checks). |
