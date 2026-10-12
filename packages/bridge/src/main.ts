@@ -1,5 +1,5 @@
 // Entry point: `pnpm bridge` (reads .env from the repository root).
-import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
+import { BuzzRelayClient, chatApiUrl, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
 import { Bridge } from './bridge.ts';
 import { bridgeConfigSchema } from './config.ts';
 
@@ -10,7 +10,7 @@ const pool = createPool(config.STATE_DATABASE_URL);
 const bridge = new Bridge({
   config,
   pool,
-  chat: new MattermostChatClient(config.MM_URL, config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
+  chat: new MattermostChatClient(chatApiUrl(config), config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
   relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
   keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
   log,

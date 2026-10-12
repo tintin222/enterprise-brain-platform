@@ -2,6 +2,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+# A customer installation's settings and keys (install/README.md)
+install/config.env
 dist/
 coverage/
 *.log

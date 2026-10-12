@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+install/config.env
 .git
 **/node_modules
 **/*.log
@@ -14,3 +15,6 @@ docs
 infra
 e2e/*
 !e2e/package.json
+
+# The brand image the installer uploads to Mattermost.
+!branding/png/mark-512.png

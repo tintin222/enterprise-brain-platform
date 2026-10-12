@@ -4,7 +4,7 @@
 // Inspect and replay events the bridge gave up on (docs/bridge-spec.md section 9). Replays are idempotent
 // and safe while the bridge runs.
 import { parseArgs } from 'node:util';
-import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
+import { BuzzRelayClient, chatApiUrl, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
 import { Bridge } from '../bridge.ts';
 import { bridgeConfigSchema } from '../config.ts';
 import type { DeadLetterDirection, DeadLetterRow } from '../store.ts';
@@ -39,7 +39,7 @@ const log = createLogger('dead-letter', config.LOG_LEVEL === 'info' ? 'warn' : c
 const bridge = new Bridge({
   config,
   pool,
-  chat: new MattermostChatClient(config.MM_URL, config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
+  chat: new MattermostChatClient(chatApiUrl(config), config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
   relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
   keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
   log,

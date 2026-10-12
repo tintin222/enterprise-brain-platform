@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Enterprise Brain on one machine (NFR-12; install/README.md). Needs Docker Engine with Compose v2 and git.
+#   ./install/brain init          create config.env (generates the installation's keys and secrets)
+#   ./install/brain up            build, start and seed everything; prints the addresses and where credentials are
+#   ./install/brain status        services and readiness
+#   ./install/brain logs [svc]    follow logs
+#   ./install/brain seed          re-run the idempotent seed (after changing settings)
+#   ./install/brain selftest      the clean-install check (an entity searchable within 5 s)
+#   ./install/brain down [--wipe] stop; --wipe also deletes every volume (all data)
+#   ./install/brain test          install from nothing, self-test, wipe: the Phase 0 gate (install/test.sh)
+set -euo pipefail
+cd "$(dirname "$0")"
+
+ENV_FILE=config.env
+compose() {
+  local files=(-f compose.yml)
+  if [ -f "$ENV_FILE" ] && grep -q '^DOMAIN_CHAT=.\+' "$ENV_FILE"; then files+=(-f compose.tls.yml); else files+=(-f compose.ports.yml); fi
+  docker compose --project-name brain --env-file "$ENV_FILE" "${files[@]}" "$@"
+}
+installer() {
+  compose --profile tools run --rm --no-deps installer "$@"
+}
+
+cmd=${1:-help}
+shift || true
+case "$cmd" in
+  init)
+    if [ ! -f "$ENV_FILE" ]; then
+      cp config.example.env "$ENV_FILE"
+      chmod 600 "$ENV_FILE"
+      echo "Created $ENV_FILE from config.example.env. Edit the Addresses section if you have domains, then run: ./install/brain up"
+    fi
+    compose --profile tools build installer
+    installer init
+    ;;
+  up)
+    [ -f "$ENV_FILE" ] || { echo "Run ./install/brain init first." >&2; exit 2; }
+    # Mattermost and the data stores first; the seed then writes the two tokens the other services need.
+    compose up -d --build --wait --wait-timeout 900 mattermost relay state-postgres
+    installer seed
+    compose up -d --build --wait --wait-timeout 600
+    installer summary
+    ;;
+  seed) installer seed ;;
+  selftest) installer selftest ;;
+  summary) installer summary ;;
+  status)
+    compose ps
+    installer status
+    ;;
+  logs) compose logs -f "$@" ;;
+  down)
+    if [ "${1:-}" = "--wipe" ]; then
+      compose --profile tools --profile tls down --volumes --remove-orphans
+      echo "Stopped and deleted every volume. $ENV_FILE is kept; delete it yourself to forget the keys."
+    else
+      compose --profile tools --profile tls down --remove-orphans
+    fi
+    ;;
+  test) exec ./test.sh ;;
+  help|*)
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+esac

@@ -1,7 +1,7 @@
 // pnpm brain:setup: register the brain with Mattermost (allow-list, OAuth app, /brain command), as the seed
 // and the installer do. Idempotent. Reads .env.
 import { BrainStore } from '@brain/brain';
-import { createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
+import { chatApiUrl, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig } from '@brain/shared';
 import { brainApiConfigSchema } from '../config.ts';
 import { ensureMattermostIntegration } from '../mattermost-setup.ts';
 
@@ -13,7 +13,7 @@ try {
   const store = new BrainStore(pool);
   await store.init();
   const result = await ensureMattermostIntegration({
-    adminChat: new MattermostChatClient(config.MM_URL, config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
+    adminChat: new MattermostChatClient(chatApiUrl(config), config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
     store,
     keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
     publicUrl: config.BRAIN_PUBLIC_URL,

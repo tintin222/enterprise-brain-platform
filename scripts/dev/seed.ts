@@ -2,13 +2,15 @@
 //   Mattermost: enable bot accounts and user access tokens, apply the Enterprise Brain name and logo, create
 //   the dev team, the admin, two people (alice, bob) and the @brain bridge bot (system admin) with an access
 //   token written to .env.
+//   Brain: Mattermost's allow-list, the OAuth app for the pages and the /brain command (docs/brain/). `--skip-brain`
+//   leaves it out, for a state database this machine cannot reach (staging runs it through the brain API).
 //   Relay: check the bridge key is the relay owner and make the reader key a relay member. `--skip-relay` leaves
 //   the relay out, for a relay this machine cannot reach (staging; the bridge grants the membership, D45).
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { BrainStore } from '@brain/brain';
 import { ensureMattermostIntegration } from '@brain/brain-api';
-import { createLogger, createPool, KeyStore, MattermostChatClient } from '@brain/shared';
+import { createLogger, createPool, IDENTITY_MIGRATIONS_DIR, KeyStore, MattermostChatClient, migrate } from '@brain/shared';
 import { MattermostApi, MattermostError, type MmUser } from '../lib/mattermost.ts';
 import { identityFromHex } from '../lib/nostr.ts';
 import { canAuthenticate, ensureRelayMember } from '../lib/relay-admin.ts';
@@ -24,6 +26,7 @@ const personPassword = requireValue(env, 'MM_PERSON_PASSWORD');
 const people = ['alice', 'bob'];
 const botUsername = 'brain';
 const skipRelay = process.argv.includes('--skip-relay');
+const skipBrain = process.argv.includes('--skip-brain');
 const envName = path.basename(envPath);
 
 await waitForStack(env, 300_000, { relay: !skipRelay });
@@ -141,12 +144,14 @@ if (!(await tokenBelongsToAdmin(env.MM_ADMIN_TOKEN))) {
 }
 
 // --- The brain (docs/brain/01-phase0-plan.md): Mattermost's allow-list, the OAuth app for the pages, the /brain command ---
-{
+if (!skipBrain) {
   const brainEnv = loadEnv();
   const pool = createPool(requireValue(brainEnv, 'STATE_DATABASE_URL'));
   try {
     const store = new BrainStore(pool);
     await store.init();
+    // The key store's table is in the identity schema; on a fresh database no service has created it yet.
+    await migrate(pool, 'identity', IDENTITY_MIGRATIONS_DIR);
     const result = await ensureMattermostIntegration({
       adminChat: new MattermostChatClient(mmUrl, requireValue(brainEnv, 'MM_ADMIN_TOKEN')),
       store,

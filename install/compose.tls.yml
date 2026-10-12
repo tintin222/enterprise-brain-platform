@@ -1,0 +1,24 @@
+# With domains: Caddy terminates TLS (Let's Encrypt) for the chat and the brain. Added by ./install/brain.
+services:
+  caddy:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN_CHAT: ${DOMAIN_CHAT}
+      DOMAIN_BRAIN: ${DOMAIN_BRAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - mattermost
+      - brain-api
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -3,7 +3,7 @@
 import { RUNTIME_MIGRATIONS_DIR } from '@brain/agent-runtime';
 import { BrainStore } from '@brain/brain';
 import { embeddingProviderFromConfig } from '@brain/models';
-import { BuzzRelayClient, createLogger, createPool, IDENTITY_MIGRATIONS_DIR, KeyStore, loadDotEnv, MattermostChatClient, migrate, parseConfig, signerFromHex } from '@brain/shared';
+import { BuzzRelayClient, chatApiUrl, createLogger, createPool, IDENTITY_MIGRATIONS_DIR, KeyStore, loadDotEnv, MattermostChatClient, migrate, parseConfig, signerFromHex } from '@brain/shared';
 import { AccessService } from './access.ts';
 import { buildApp } from './app.ts';
 import { brainApiConfigSchema } from './config.ts';
@@ -27,8 +27,8 @@ const embeddings = config.BRAIN_FEATURE_SEMANTIC_SEARCH === 'false' ? undefined 
 if (config.BRAIN_FEATURE_SEMANTIC_SEARCH === 'true' && !embeddings) throw new Error('BRAIN_FEATURE_SEMANTIC_SEARCH=true needs an embedding provider (GEMINI_API_KEY or EMBEDDING_PROVIDER=mock)');
 if (!embeddings) log.warn('No embedding provider: search is keyword-only (set GEMINI_API_KEY for semantic search, D53)');
 
-const chat = new MattermostChatClient(config.MM_URL, config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND });
-const adminChat = new MattermostChatClient(config.MM_URL, config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND });
+const chat = new MattermostChatClient(chatApiUrl(config), config.MM_BRIDGE_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND });
+const adminChat = new MattermostChatClient(chatApiUrl(config), config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND });
 const botUserId = (await chat.getMe()).id;
 const keyStore = new KeyStore(pool, config.KEY_ENCRYPTION_KEY);
 const access = new AccessService(chat, store);

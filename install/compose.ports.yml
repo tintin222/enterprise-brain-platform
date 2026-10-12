@@ -1,0 +1,8 @@
+# Without domains: the chat and the brain listen on the host's ports (plain HTTP). Added by ./install/brain.
+services:
+  mattermost:
+    ports:
+      - "8065:8065"
+  brain-api:
+    ports:
+      - "9120:9120"

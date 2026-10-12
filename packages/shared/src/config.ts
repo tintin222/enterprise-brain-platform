@@ -43,10 +43,19 @@ export const relayConfigSchema = z.object({
 
 /** Settings for services that talk to Mattermost. */
 export const chatConfigSchema = z.object({
+  /** Mattermost's public address: links for people, OAuth redirects, the SiteURL. */
   MM_URL: z.url(),
+  /**
+   * Where our services reach Mattermost's API when that differs from the public address (inside a Compose network
+   * `http://mattermost:8065`, on Railway the private hostname). Empty: MM_URL.
+   */
+  MM_API_URL: z.union([z.literal(''), z.url()]).default(''),
   /** Mattermost API requests per second per token. */
   MM_REQUESTS_PER_SECOND: z.coerce.number().positive().default(20),
 });
+
+/** The address a service calls Mattermost's API at (D58). */
+export const chatApiUrl = (config: { MM_URL: string; MM_API_URL?: string }): string => config.MM_API_URL || config.MM_URL;
 
 export const secretKeySchema = hex32;
 

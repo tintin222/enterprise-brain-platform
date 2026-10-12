@@ -1,7 +1,7 @@
 // pnpm agent:provision --handle <handle> --name "<Display Name>" [--provider anthropic|google|echo] [--model <id>] [--instructions "<text>"]
 // Creates (or updates) an agent: key, Mattermost bot and token, relay identity, registry record.
 import { parseArgs } from 'node:util';
-import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig, signerFromHex } from '@brain/shared';
+import { BuzzRelayClient, chatApiUrl, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig, signerFromHex } from '@brain/shared';
 import { provisionConfigSchema } from '../config.ts';
 import { provisionAgent } from '../provisioning.ts';
 import type { AgentProvider } from '../registry.ts';
@@ -30,7 +30,7 @@ try {
   const agent = await provisionAgent(
     {
       pool,
-      chat: new MattermostChatClient(config.MM_URL, config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
+      chat: new MattermostChatClient(chatApiUrl(config), config.MM_ADMIN_TOKEN, { requestsPerSecond: config.MM_REQUESTS_PER_SECOND }),
       relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
       keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
       bridgeSigner: signerFromHex(config.BRIDGE_SECRET_KEY),

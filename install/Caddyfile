@@ -1,0 +1,12 @@
+# TLS in front of the chat and the brain (install/compose.tls.yml). Certificates come from Let's Encrypt.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN_CHAT} {
+	reverse_proxy mattermost:8065
+}
+
+{$DOMAIN_BRAIN} {
+	reverse_proxy brain-api:9120
+}

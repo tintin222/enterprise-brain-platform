@@ -13,7 +13,7 @@ import fastifySwagger from '@fastify/swagger';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { hasZodFastifySchemaValidationErrors, jsonSchemaTransform, serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AccessError, type AccessService } from './access.ts';
-import { registerAuth } from './auth.ts';
+import { registerAuth, requireAdmin } from './auth.ts';
 import { ChannelLinker } from './channels.ts';
 import type { BrainApiConfig } from './config.ts';
 import { registerBrainRoutes } from './routes-brain.ts';
@@ -49,6 +49,13 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, trustProxy: true, genReqId: () => randomUUID(), bodyLimit: 1_048_576 }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  // A POST without a body but with a JSON content type (curl -X POST, many HTTP clients) is not an error here:
+  // the route's schema decides whether a body is required. Fastify's own secure parser handles the rest.
+  const parseJson = app.getDefaultJsonParser('error', 'error');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
+    if (body === '') done(null, undefined);
+    else void parseJson(request, body as string, done);
+  });
   // Mattermost posts slash commands as forms (spike B1).
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(body as string)));
@@ -111,7 +118,10 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
     const ready = Object.values(checks).every(Boolean);
     return reply.code(ready ? 200 : 503).send({ ready, checks });
   });
-  app.get('/metrics', { schema: { hide: true } }, async (_request, reply) => {
+  // Metrics hold counts and timings only, but this port is public (pages, sign-in), so a scraper needs the
+  // service token or an administrator's session; the other services keep theirs on a private port.
+  app.get('/metrics', { schema: { hide: true } }, async (request, reply) => {
+    requireAdmin(request);
     const text = await metricsRegistry.metrics();
     return reply.type(metricsRegistry.contentType).send(text);
   });

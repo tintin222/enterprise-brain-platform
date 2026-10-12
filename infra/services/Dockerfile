@@ -7,7 +7,7 @@
 FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS manifests
 WORKDIR /app
 # Workspace manifests first, so dependency layers are reused when only source changes.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/models/package.json packages/models/
 COPY packages/brain/package.json packages/brain/
@@ -29,9 +29,10 @@ FROM manifests
 ENV NODE_ENV=production
 # Corepack installs the pnpm version pinned in package.json (packageManager).
 RUN corepack enable pnpm && pnpm install --frozen-lockfile --prod && pnpm store prune
-COPY tsconfig.base.json tsconfig.json ./
 COPY packages/ packages/
 COPY scripts/ scripts/
+# The brand image the installer uploads to Mattermost (install/README.md).
+COPY branding/png/mark-512.png branding/png/mark-512.png
 COPY --from=web /app/packages/brain-web/dist packages/brain-web/dist
 ENV BRAIN_WEB_DIR=/app/packages/brain-web/dist
 
