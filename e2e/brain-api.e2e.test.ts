@@ -97,12 +97,14 @@ describe('brain API', () => {
     expect(Date.now() - created).toBeLessThan(5000);
     expect(found.results[0]?.matched).toContain('keyword');
 
-    // The worker embeds the new chunk (mock provider); a paraphrase then matches by meaning as well.
-    await api.worker?.runOnce();
-    const byMeaning = await search('code name warehouse migration');
-    const hit = byMeaning.results.find((candidate) => candidate.entityId === entity.id);
+    // The worker embeds the new chunk (mock provider) on its next round; a paraphrase then matches by meaning as
+    // well. A round may already be under way when the entity is created, so wait for the one after it.
+    const byMeaning = await waitFor(async () => {
+      await api.worker?.runOnce();
+      const result = await search('code name warehouse migration');
+      return result.results.find((candidate) => candidate.entityId === entity.id)?.matched.includes('semantic') ? result : undefined;
+    }, 15_000, 250);
     expect(byMeaning.semantic).toBe(true);
-    expect(hit?.matched).toContain('semantic');
 
     // Every change is a version; every write is audited.
     await json(`/api/v1/brain/entities/${entity.id}`, { method: 'PATCH', body: JSON.stringify({ title: `Decision about ${gateWord}, revised` }) });

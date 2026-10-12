@@ -1,8 +1,13 @@
 // pnpm brain:bench [--chunks 60000] [--queries 200] [--clean]: the NFR-1 measurement. Seeds synthetic entities
 // and chunks into a dedicated "bench" container of the local brain (text and random unit vectors generated in
 // SQL, so nothing crosses the wire), then times keyword, semantic and hybrid searches directly against the
-// store (no HTTP). Semantic queries use the vectors of random stored chunks, so nearest neighbours exist.
+// store (no HTTP). Each query is made from a random stored chunk: three of its words and its vector, the way a
+// person searches for something they remember, so the all-terms keyword path (D61) and the nearest neighbours
+// exist. A second, smaller series uses three random words that occur together nowhere, which is what a
+// natural-language question looks like to the keyword half: it measures the any-term fallback.
 // `--clean` removes the synthetic data. The numbers come from a laptop; the gate report says so.
+// Chunk text draws words from a 5 000-word vocabulary with a heavy head (a cubed uniform index): a few words
+// sit in nearly every chunk and most words in a few per cent of them.
 import { parseArgs } from 'node:util';
 import { BrainStore } from '@brain/brain';
 import { createPool, loadDotEnv } from '@brain/shared';
@@ -17,6 +22,10 @@ const WORDS = ('warehouse migration erp invoice schema customer order shipment f
   'latency throughput queue worker embedding search index channel thread message meeting transcript action owner deadline').split(' ');
 const TYPES = ['conversation', 'decision', 'requirement', 'document', 'task', 'system'];
 const PER_ENTITY = 5;
+const VOCABULARY = 5000;
+const MODULUS = 1009;
+/** Word index for a pseudo-random draw: cubing a uniform number in [0, 1) makes low indexes common and high ones rare. */
+const wordIndex = (draw: number): number => Math.floor(VOCABULARY * ((draw % MODULUS) / MODULUS) ** 3);
 
 function quantile(sorted: number[], q: number): number {
   return sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
@@ -27,7 +36,7 @@ function sentence(seed: number, words: number): string {
   const out: string[] = [];
   for (let i = 0; i < words; i++) {
     x = (x * 1103515245 + 12345) & 0x7fffffff;
-    out.push(WORDS[x % WORDS.length]!);
+    out.push(`t${wordIndex(x >>> 8)}`);
   }
   return out.join(' ');
 }
@@ -68,7 +77,7 @@ try {
     await pool.query(
       `INSERT INTO brain.chunks (id, entity_id, entity_type, container_id, channel_id, visibility, ordinal, text, metadata, embedding, embedding_model, embedded_at)
        SELECT e.id || ':' || c, e.id, e.type, e.container_id, NULL, 'public', c,
-              e.title || '. ' || (SELECT string_agg(($1::text[])[1 + ((n * 31 + c * 17 + w * 7) % $2)], ' ') FROM generate_series(1, 60) AS w),
+              e.title || '. ' || (SELECT string_agg('t' || floor($1::int * power(((n * 31 + c * 17 + w * 7919) % $2) / $2::float, 3))::int, ' ') FROM generate_series(1, 60) AS w),
               '{"bench": true}',
               (SELECT array_agg(random() - 0.5) FROM generate_series(1, $3))::vector,
               'bench', now()
@@ -76,7 +85,7 @@ try {
        JOIN brain.entities e ON e.id = 'bench-' || $6 || '-' || n
        CROSS JOIN generate_series(0, $7::int - 1) AS c
        ON CONFLICT (id) DO NOTHING`,
-      [WORDS, WORDS.length, DIMENSIONS, from, to, bench.id.slice(0, 8), PER_ENTITY],
+      [VOCABULARY, MODULUS, DIMENSIONS, from, to, bench.id.slice(0, 8), PER_ENTITY],
     );
     console.log(`  seeded ${Math.min(to * PER_ENTITY, target)} chunks (${Math.round((Date.now() - started) / 1000)} s)`);
   }
@@ -86,14 +95,18 @@ try {
   const total = Number((await pool.query<{ n: string }>('SELECT count(*) AS n FROM brain.chunks')).rows[0]?.n ?? 0);
   console.log(`total chunks in the store: ${total} (seeding took ${Math.round((Date.now() - started) / 1000)} s)`);
 
-  const modes = { keyword: [] as number[], semantic: [] as number[], hybrid: [] as number[] };
-  const sampled = await pool.query<{ embedding: string }>('SELECT embedding::text AS embedding FROM brain.chunks TABLESAMPLE SYSTEM (2) WHERE embedding IS NOT NULL LIMIT $1', [queryCount]);
-  const vectors = sampled.rows.map((row) => JSON.parse(row.embedding) as number[]);
-  if (vectors.length === 0) throw new Error('No embedded chunks to sample query vectors from');
-  for (let i = 0; i < 5; i++) await store.search({ query: sentence(i, 3), scope: { kind: 'all' }, limit: 20 });
+  const modes = { keyword: [] as number[], semantic: [] as number[], hybrid: [] as number[], keywordAnyTermFallback: [] as number[] };
+  const sampled = await pool.query<{ text: string; embedding: string }>("SELECT text, embedding::text AS embedding FROM brain.chunks TABLESAMPLE SYSTEM (2) WHERE embedding IS NOT NULL AND metadata->>'bench' = 'true' LIMIT $1", [queryCount]);
+  if (sampled.rows.length === 0) throw new Error('No embedded bench chunks to build queries from');
+  // Three words from the chunk's body (after the title), spread across it.
+  const remembered = (text: string): string => {
+    const words = text.split('. ').slice(1).join('. ').split(' ').filter(Boolean);
+    return [words[5], words[Math.floor(words.length / 2)], words[words.length - 6]].filter((w): w is string => Boolean(w)).join(' ');
+  };
+  const samples = sampled.rows.map((row) => ({ q: remembered(row.text), embedding: JSON.parse(row.embedding) as number[] }));
+  for (let i = 0; i < 5; i++) await store.search({ query: samples[i % samples.length]!.q, scope: { kind: 'all' }, limit: 20 });
   for (let i = 0; i < queryCount; i++) {
-    const q = sentence(7919 + i, 3);
-    const embedding = vectors[i % vectors.length]!;
+    const { q, embedding } = samples[i % samples.length]!;
     const t0 = performance.now();
     await store.search({ query: q, scope: { kind: 'all' }, limit: 20 });
     const t1 = performance.now();
@@ -105,12 +118,19 @@ try {
     modes.semantic.push(t2 - t1);
     modes.hybrid.push(t3 - t2);
   }
+  // The fallback: random word triples, which co-occur nowhere, so every chunk holding any of them is ranked.
+  const fallbackQueries = Math.min(50, queryCount);
+  for (let i = 0; i < fallbackQueries; i++) {
+    const t0 = performance.now();
+    await store.search({ query: sentence(7919 + i, 3), scope: { kind: 'all' }, limit: 20 });
+    modes.keywordAnyTermFallback.push(performance.now() - t0);
+  }
   const report: Record<string, { p50: number; p95: number; max: number }> = {};
   for (const [mode, samples] of Object.entries(modes)) {
     const sorted = [...samples].sort((a, b) => a - b);
     report[mode] = { p50: Math.round(quantile(sorted, 0.5)), p95: Math.round(quantile(sorted, 0.95)), max: Math.round(sorted.at(-1) ?? 0) };
   }
-  console.log(JSON.stringify({ chunks: total, queries: queryCount, latencyMs: report, nfr1: { targetP95Ms: 1500, hybridP95Ms: report.hybrid?.p95, met: (report.hybrid?.p95 ?? Infinity) < 1500 } }, null, 2));
+  console.log(JSON.stringify({ chunks: total, queries: queryCount, fallbackQueries, latencyMs: report, nfr1: { targetP95Ms: 1500, hybridP95Ms: report.hybrid?.p95, met: (report.hybrid?.p95 ?? Infinity) < 1500, anyTermFallbackP95Ms: report.keywordAnyTermFallback?.p95 } }, null, 2));
 } finally {
   await pool.end();
 }

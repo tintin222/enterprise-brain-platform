@@ -60,8 +60,13 @@ function entityFilterSql(filters: SearchFilters | undefined, params: Params): st
   return clauses.length > 0 ? clauses.join(' AND ') : 'TRUE';
 }
 
-/** The query's lexemes, stemmed once, ORed: questions rarely repeat a text's exact phrasing (D34). */
-const TSQUERY = `to_tsquery('simple', array_to_string(array(SELECT quote_literal(lexeme) FROM unnest(tsvector_to_array(to_tsvector('english', $QUERY))) AS lexeme), ' | '))`;
+/**
+ * The query's lexemes, stemmed once. Chunks holding all of them are ranked first; only when none does, chunks
+ * holding any of them (D34: questions rarely repeat a text's exact phrasing). Ranking every chunk that holds any
+ * common word costs seconds at 250 k chunks, so the any-term half runs only as the fallback (D61).
+ */
+const LEXEMES = `array(SELECT quote_literal(lexeme) FROM unnest(tsvector_to_array(to_tsvector('english', $QUERY))) AS lexeme)`;
+const tsquery = (operator: '&' | '|'): string => `to_tsquery('simple', array_to_string(${LEXEMES}, ' ${operator} '))`;
 
 interface Row {
   chunk_id: string;
@@ -98,7 +103,8 @@ function citationOf(row: Row): Citation {
 export async function hybridSearch(db: Queryable, input: SearchParams): Promise<SearchResult[]> {
   const params = new Params();
   const query = params.add(input.query);
-  const tsquery = TSQUERY.replace('$QUERY', query);
+  const allTerms = tsquery('&').replace('$QUERY', query);
+  const anyTerm = tsquery('|').replace('$QUERY', query);
   const scope = scopeSql(input.scope, params);
   const chunkFilters = chunkFilterSql(input.filters, params);
   const candidates = params.add(CANDIDATES);
@@ -114,14 +120,22 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
   const entityFilters = entityFilterSql(input.filters, params);
   const limit = params.add(Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
   const sql = `
-    WITH q AS (SELECT ${tsquery} AS query),
-    kw AS (
-      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.query) AS rank
+    WITH q AS (SELECT ${allTerms} AS all_terms, ${anyTerm} AS any_term),
+    kw_all AS (
+      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.all_terms) AS rank
       FROM brain.chunks c, q
-      WHERE c.search @@ q.query AND ${scope}${chunkFilters}
+      WHERE c.search @@ q.all_terms AND ${scope}${chunkFilters}
       ORDER BY rank DESC
       LIMIT ${candidates}
     ),
+    kw_any AS (
+      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.any_term) AS rank
+      FROM brain.chunks c, q
+      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND c.search @@ q.any_term AND ${scope}${chunkFilters}
+      ORDER BY rank DESC
+      LIMIT ${candidates}
+    ),
+    kw AS (SELECT id, entity_id, rank FROM kw_all UNION ALL SELECT id, entity_id, rank FROM kw_any),
     kwr AS (SELECT id, entity_id, row_number() OVER (ORDER BY rank DESC) AS r FROM kw),
     vec AS (${vectorHalf}),
     vecr AS (SELECT id, entity_id, row_number() OVER (ORDER BY distance) AS r FROM vec),
@@ -133,7 +147,7 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
     best AS (SELECT DISTINCT ON (entity_id) id, entity_id, score, keyword, semantic FROM fused ORDER BY entity_id, score DESC)
     SELECT b.id AS chunk_id, e.id AS entity_id, e.type AS entity_type, e.title, e.container_id, e.channel_id, e.version, e.updated_at,
            c.text, c.metadata, b.score::text AS score, b.keyword, b.semantic,
-           CASE WHEN b.keyword THEN ts_headline('english', c.text, q.query, 'StartSel="",StopSel="",MaxFragments=2,MaxWords=40,MinWords=15,FragmentDelimiter=" … "') END AS headline
+           CASE WHEN b.keyword THEN ts_headline('english', c.text, q.any_term, 'StartSel="",StopSel="",MaxFragments=2,MaxWords=40,MinWords=15,FragmentDelimiter=" … "') END AS headline
     FROM best b
     JOIN brain.chunks c ON c.id = b.id
     JOIN brain.entities e ON e.id = b.entity_id

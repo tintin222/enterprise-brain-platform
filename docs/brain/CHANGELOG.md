@@ -7,7 +7,7 @@ One entry per phase (spec section 12), newest first. Requirement ids refer to `d
 Plan: `01-phase0-plan.md`. Gate: `gates/phase-0.md`.
 
 - **Knowledge store** (`packages/brain`, schema `brain`): containers (Project, Topic, General), channel links, entities with versions, typed links, chunks with keyword and vector indexes, the append-only audit log, an event outbox, installation settings. Migrations 0003 to 0006; the former thread documents became conversation entities. FR-9.1, FR-9.4, NFR-9.
-- **Hybrid search**: keyword and vector halves fused by reciprocal rank inside the caller's scope, one result per entity, a relevance cutoff on semantic hits, citations with post permalinks. FR-9.2, FR-9.5.
+- **Hybrid search**: keyword and vector halves fused by reciprocal rank inside the caller's scope, one result per entity, a relevance cutoff on semantic hits (D60), chunks holding all query terms ranked before the any-term fallback (D61), citations with post permalinks. FR-9.2, FR-9.5.
 - **Model providers** (`packages/models`): Anthropic and Google (Gemini) with a tool loop, the echo provider, embeddings from Google or a deterministic mock, provider and model per agent, a price table. Spec section 5, decision 2; D54, D56.
 - **pgvector** compiled into our state-database image (`infra/state-postgres`), used by the local stack, the installation and staging. D52.
 - **Capture of every channel** (D50): the bridge's sweep adds `@brain` to channels it never captured; opted-out channels stay out. FR-1.10.
