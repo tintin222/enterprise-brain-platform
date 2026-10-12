@@ -61,6 +61,8 @@ jobs:
           pnpm dev:up --enterprise-brain
           pnpm dev:seed
       - name: End-to-end suite
+        # bash with pipefail, so a failing suite fails the step despite the tee.
+        shell: bash
         run: pnpm test:e2e 2>&1 | tee e2e.log
       - name: No secret in the logs
         run: pnpm check:logs e2e.log

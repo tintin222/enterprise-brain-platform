@@ -31,6 +31,10 @@ services:
       # Local mode is a socket inside the container; the image's healthcheck (mmctl --local) needs it.
       MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
       MM_LOGSETTINGS_ENABLEDIAGNOSTICS: "false"
+    # Mattermost calls the brain API on the host (slash commands, dialogs; BRAIN_INTERNAL_URL). Docker Desktop and
+    # Colima define host.docker.internal themselves; Docker Engine on Linux (CI runners, Linux laptops) does not.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8065:8065"
     volumes:
