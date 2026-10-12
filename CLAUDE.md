@@ -12,10 +12,14 @@ Team chat with AI agents as channel participants, built for an "enterprise brain
 
 We do not modify Mattermost or Buzz source code in this repository. Both run as unmodified upstream services that we talk to over their public APIs.
 
+Since 2026-10-12 the product is being extended into the **Company Brain** described in `docs/COMPANY_BRAIN_SPEC.md`: Projects and Topics as the two top-level containers, a knowledge model with entities, versions and links, three agents (Analyst, Follow-up, Packager) and a development package for Claude Code. See "Company Brain conventions" below.
+
 ## Read before you code
 
 | Doc | Read it when |
 | --- | --- |
+| `docs/COMPANY_BRAIN_SPEC.md` | Before any Company Brain work. The owner's product specification: requirements FR-x.y and NFR-x, data model, phases 0–5 with gates, and the final decisions in its section 13 (never reopen them). |
+| `docs/brain/` | With the spec. `00-gap-analysis.md` audits this codebase against it; then one plan per phase (`01-phase0-plan.md` …), `API.md` (generated), `CHANGELOG.md` and `gates/phase-N.md`. The newest file tells you which step the work is at. |
 | `docs/architecture.md` | Always, once per session. Components, sources of truth, identity model, trust boundaries. |
 | `docs/build-plan.md` | Before starting any task. Work is phased; each phase has acceptance criteria. |
 | `docs/bridge-spec.md` | Before touching `packages/bridge`. Event mapping, state tables, loop prevention. |
@@ -38,6 +42,18 @@ We do not modify Mattermost or Buzz source code in this repository. Both run as 
 9. **Secrets.** Private keys and tokens are encrypted at rest, never logged, and never committed. Use `.env` locally and keep `.env.example` current.
 10. **Record decisions.** Any non-obvious design choice gets a short entry in `docs/decisions.md` (what, why, alternatives rejected).
 
+## Company Brain conventions
+
+From section 12 of `docs/COMPANY_BRAIN_SPEC.md`; they apply to every brain change on top of the rules above.
+
+- Work in the spec's order: gap analysis, then a plan per phase approved by the owner, then the phase; at the end of a phase run its gate (spec section 11) and write the result to `docs/brain/gates/phase-N.md`.
+- Never modify Mattermost's messaging tables (rule 5 already forbids touching its database); extend through our own tables and links. There is no tenant concept anywhere: one installation per customer.
+- Every commit names the FR or NFR ids it serves. Every FR gets an automated test; agents get golden-set fixtures under `tests/brain/golden/`.
+- Every brain feature sits behind a feature flag in the installation config (`.env.example` documents each flag).
+- No plaintext secret in code, fixtures, logs or test output; a CI check enforces it.
+- Keep `docs/brain/CHANGELOG.md` current per phase and regenerate `docs/brain/API.md` from the routes.
+- Ask the owner, in plain words with a recommendation, when a decision touches the data model or the container model, when a new external dependency is needed, or when a gate cannot be met as written.
+
 ## Stack defaults
 
 TypeScript on the current Node LTS, pnpm workspaces, Postgres for our state, Docker Compose for the local stack, vitest for tests. This is decision D8 in `docs/decisions.md`; if the owner changes it there, follow the doc and not this section.
@@ -48,7 +64,8 @@ Pinned toolchain (D13 in `docs/decisions.md`): Node 24.21.0, which pnpm download
 
 ```
 CLAUDE.md
-docs/
+docs/                  specs and decisions; COMPANY_BRAIN_SPEC.md is the owner's product spec
+  brain/               Company Brain working documents: gap analysis, phase plans, API.md, CHANGELOG.md, gates/
 infra/                 Docker Compose for the local stack (Mattermost, Buzz relay, databases)
   chat/                image with our own Mattermost build, Enterprise Brain chat (compose.chat.yml selects it, D48)
   mostlymatter/        image with the uncapped Mostlymatter build (compose.mostlymatter.yml selects it)
