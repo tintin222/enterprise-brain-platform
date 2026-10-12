@@ -1,6 +1,5 @@
 // Agent registry, provisioning, dispatcher, context assembly and LLM calls (docs/agents-and-ingestion.md, part A).
-export { adminApiConfigSchema, provisionConfigSchema, runtimeConfigSchema, type AdminApiConfig, type ProvisionConfig, type RuntimeConfig } from './config.ts';
-export { startAdminApi, type AdminApi, type AdminApiDeps } from './admin-api.ts';
+export { provisionConfigSchema, runtimeConfigSchema, type ProvisionConfig, type RuntimeConfig } from './config.ts';
 export { EchoAgent, type EchoAgentDeps } from './echo-agent.ts';
 export { JobStore, type Job, type JobStatus } from './jobs.ts';
 // Providers live in @brain/models (D54); re-exported for callers that knew them here.

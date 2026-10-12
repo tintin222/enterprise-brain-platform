@@ -499,6 +499,12 @@ export class BrainStore {
     return r.rows.map(toEntity);
   }
 
+  /** How many live entities of each type a container holds. */
+  async entityCounts(containerId: string): Promise<Record<string, number>> {
+    const r = await this.pool.query<{ type: string; n: number }>('SELECT type, count(*)::int AS n FROM brain.entities WHERE container_id = $1 AND archived_at IS NULL GROUP BY type', [containerId]);
+    return Object.fromEntries(r.rows.map((row) => [row.type, row.n]));
+  }
+
   async listVersions(entityId: string): Promise<EntityVersion[]> {
     const r = await this.pool.query<VersionRow>(`SELECT ${VERSION_COLUMNS} FROM brain.entity_versions WHERE entity_id = $1 ORDER BY version DESC`, [entityId]);
     return r.rows.map(toVersion);
@@ -549,15 +555,18 @@ export class BrainStore {
     return r.rowCount === 1;
   }
 
-  /** Chunks waiting for an embedding, oldest change first. */
-  async chunksToEmbed(limit: number): Promise<(Chunk & { updatedAt: Date })[]> {
-    const r = await this.pool.query<ChunkRow>('SELECT id, entity_id, ordinal, text, metadata, embedded_at, updated_at FROM brain.chunks WHERE embedded_at IS NULL ORDER BY updated_at LIMIT $1', [limit]);
-    return r.rows.map((row) => ({ ...toChunk(row), updatedAt: row.updated_at }));
+  /**
+   * Chunks waiting for an embedding, oldest change first. `version` is the chunk's update time as Postgres
+   * prints it (microseconds included), so `saveEmbedding` can tell whether the text changed meanwhile.
+   */
+  async chunksToEmbed(limit: number): Promise<(Chunk & { version: string })[]> {
+    const r = await this.pool.query<ChunkRow & { version: string }>('SELECT id, entity_id, ordinal, text, metadata, embedded_at, updated_at, updated_at::text AS version FROM brain.chunks WHERE embedded_at IS NULL ORDER BY updated_at LIMIT $1', [limit]);
+    return r.rows.map((row) => ({ ...toChunk(row), version: row.version }));
   }
 
   /** Store an embedding unless the chunk changed since it was read (then the next round embeds the new text). */
-  async saveEmbedding(id: string, readAt: Date, vector: number[], model: string): Promise<boolean> {
-    const r = await this.pool.query('UPDATE brain.chunks SET embedding = $3::vector, embedding_model = $4, embedded_at = now() WHERE id = $1 AND updated_at = $2', [id, readAt, `[${vector.join(',')}]`, model]);
+  async saveEmbedding(id: string, version: string, vector: number[], model: string): Promise<boolean> {
+    const r = await this.pool.query('UPDATE brain.chunks SET embedding = $3::vector, embedding_model = $4, embedded_at = now() WHERE id = $1 AND updated_at = $2::timestamptz', [id, version, `[${vector.join(',')}]`, model]);
     return r.rowCount === 1;
   }
 
@@ -673,6 +682,17 @@ export class BrainStore {
 
   async markDelivered(ids: number[]): Promise<void> {
     if (ids.length > 0) await this.pool.query('UPDATE brain.events SET delivered_at = now() WHERE id = ANY($1::bigint[])', [ids]);
+  }
+
+  // --- settings (no secrets) ---
+
+  async getSetting<T>(key: string): Promise<T | undefined> {
+    const r = await this.pool.query<{ value: T }>('SELECT value FROM brain.settings WHERE key = $1', [key]);
+    return r.rows[0]?.value;
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await this.pool.query('INSERT INTO brain.settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()', [key, JSON.stringify(value)]);
   }
 
   // --- export (NFR-9) ---

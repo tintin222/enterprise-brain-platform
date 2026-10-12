@@ -25,6 +25,8 @@ export const modelConfigSchema = z.object({
   EMBEDDING_PROVIDER: z.enum(['auto', 'google', 'mock', 'none']).default('auto'),
   EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
   EMBEDDING_DIMENSIONS: z.coerce.number().int().min(16).max(4096).default(1536),
+  /** Cosine distance above which a semantic hit is dropped; empty uses the provider's default. */
+  EMBEDDING_MAX_DISTANCE: z.coerce.number().min(0).max(2).optional(),
   MODEL_PRICES_JSON: z.string().optional(),
 });
 
@@ -67,9 +69,9 @@ export function embeddingProviderFromConfig(config: ModelConfig): EmbeddingProvi
     case 'none':
       return undefined;
     case 'mock':
-      return new MockEmbeddingProvider(config.EMBEDDING_DIMENSIONS);
+      return new MockEmbeddingProvider(config.EMBEDDING_DIMENSIONS, config.EMBEDDING_MAX_DISTANCE);
     case 'google':
       if (!config.GEMINI_API_KEY) throw new Error('EMBEDDING_PROVIDER=google needs GEMINI_API_KEY');
-      return new GeminiEmbeddingProvider({ apiKey: config.GEMINI_API_KEY, model: config.EMBEDDING_MODEL, dimensions: config.EMBEDDING_DIMENSIONS });
+      return new GeminiEmbeddingProvider({ apiKey: config.GEMINI_API_KEY, model: config.EMBEDDING_MODEL, dimensions: config.EMBEDDING_DIMENSIONS, ...(config.EMBEDDING_MAX_DISTANCE === undefined ? {} : { relevanceDistance: config.EMBEDDING_MAX_DISTANCE }) });
   }
 }

@@ -5,7 +5,7 @@ import { RateLimiter } from '../async.ts';
 import type { Logger } from '../logger.ts';
 import { metrics } from '../metrics.ts';
 import { MattermostEventStream, type ChatEventHandlers, type ChatEventStream } from './events.ts';
-import type { MmBot, MmChannel, MmFileInfo, MmPost, MmPostList, MmReaction, MmTeam, MmUser, NewPost } from './types.ts';
+import type { MmBot, MmChannel, MmCommand, MmDialog, MmFile, MmFileInfo, MmOAuthApp, MmOAuthTokens, MmPost, MmPostList, MmReaction, MmTeam, MmUser, NewChannel, NewCommand, NewOAuthApp, NewPost } from './types.ts';
 
 export class ChatApiError extends Error {
   readonly status: number;
@@ -64,6 +64,35 @@ export interface ChatClient {
   sendTyping(userId: string, channelId: string, parentId?: string): Promise<void>;
   permalink(teamName: string, postId: string): string;
   connectEvents(handlers: ChatEventHandlers, logger: Logger): ChatEventStream;
+
+  // --- The brain's needs (docs/brain/01-phase0-plan.md section 10) ---
+
+  /** A team's public channels, and with `includePrivate` its private ones too (system admin). */
+  getTeamChannels(teamId: string, options?: { includePrivate?: boolean }): Promise<MmChannel[]>;
+  getChannelByName(teamId: string, name: string): Promise<MmChannel | undefined>;
+  createChannel(channel: NewChannel): Promise<MmChannel>;
+  patchChannel(channelId: string, patch: { display_name?: string; header?: string; purpose?: string }): Promise<MmChannel>;
+  createDirectChannel(userIdA: string, userIdB: string): Promise<MmChannel>;
+  /** Download an attachment (spike B4). */
+  getFile(fileId: string): Promise<MmFile>;
+  /** A post only `userId` sees (system admins may send them; slash-command replies need no permission). */
+  createEphemeralPost(userId: string, post: NewPost): Promise<MmPost>;
+  pinPost(postId: string): Promise<void>;
+  /** Custom slash commands of a team (spike B1). */
+  listCommands(teamId: string): Promise<MmCommand[]>;
+  createCommand(command: NewCommand): Promise<MmCommand>;
+  updateCommand(id: string, command: NewCommand): Promise<MmCommand>;
+  deleteCommand(id: string): Promise<void>;
+  /** Open an interactive dialog for a fresh trigger id (valid for OutgoingIntegrationRequestsTimeout, spike B2). */
+  openDialog(request: { trigger_id: string; url: string; dialog: MmDialog }): Promise<void>;
+  /** OAuth 2.0 apps for which Mattermost is the provider (spike B3; system admin). */
+  listOAuthApps(): Promise<MmOAuthApp[]>;
+  createOAuthApp(app: NewOAuthApp): Promise<MmOAuthApp>;
+  /** The authorization-code exchange at {MM_URL}/oauth/access_token (not under /api/v4). */
+  exchangeOAuthCode(input: { clientId: string; clientSecret: string; code: string; redirectUri: string }): Promise<MmOAuthTokens>;
+  /** Server configuration (system admin). */
+  getConfig(): Promise<Record<string, unknown>>;
+  patchConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export interface MattermostChatClientOptions {
@@ -276,5 +305,103 @@ export class MattermostChatClient implements ChatClient {
 
   connectEvents(handlers: ChatEventHandlers, logger: Logger): ChatEventStream {
     return new MattermostEventStream(this.baseUrl, this.#token, handlers, logger);
+  }
+
+  async #pages<T>(path: string, perPage = 200): Promise<T[]> {
+    const all: T[] = [];
+    for (let page = 0; ; page++) {
+      const items = (await this.#request<T[] | null>('GET', `${path}${path.includes('?') ? '&' : '?'}page=${page}&per_page=${perPage}`)) ?? [];
+      all.push(...items);
+      if (items.length < perPage) return all;
+    }
+  }
+
+  async getTeamChannels(teamId: string, options: { includePrivate?: boolean } = {}): Promise<MmChannel[]> {
+    const channels = await this.#pages<MmChannel>(`/teams/${teamId}/channels`);
+    if (options.includePrivate) channels.push(...(await this.#pages<MmChannel>(`/teams/${teamId}/channels/private`)));
+    return channels;
+  }
+
+  getChannelByName(teamId: string, name: string): Promise<MmChannel | undefined> {
+    return this.#find(`/teams/${teamId}/channels/name/${encodeURIComponent(name)}`);
+  }
+
+  createChannel(channel: NewChannel): Promise<MmChannel> {
+    return this.#request('POST', '/channels', channel);
+  }
+
+  patchChannel(channelId: string, patch: { display_name?: string; header?: string; purpose?: string }): Promise<MmChannel> {
+    return this.#request('PUT', `/channels/${channelId}/patch`, patch);
+  }
+
+  createDirectChannel(userIdA: string, userIdB: string): Promise<MmChannel> {
+    return this.#request('POST', '/channels/direct', [userIdA, userIdB]);
+  }
+
+  async getFile(fileId: string): Promise<MmFile> {
+    const waitedMs = await this.#limiter.acquire(this.#limiterKey);
+    if (waitedMs > 0) metrics.throttleWait.observe({ target: 'mattermost' }, waitedMs / 1000);
+    const response = await fetch(`${this.baseUrl}/api/v4/files/${fileId}`, { headers: { Authorization: `Bearer ${this.#token}`, 'X-Requested-With': 'XMLHttpRequest' }, signal: AbortSignal.timeout(this.#timeoutMs) });
+    metrics.chatRequests.inc({ method: 'GET', status: String(response.status) });
+    if (!response.ok) throw new ChatApiError(response.status, 'GET', `/files/${fileId}`);
+    return { bytes: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') };
+  }
+
+  createEphemeralPost(userId: string, post: NewPost): Promise<MmPost> {
+    return this.#request('POST', '/posts/ephemeral', { user_id: userId, post });
+  }
+
+  async pinPost(postId: string): Promise<void> {
+    await this.#request('POST', `/posts/${postId}/pin`);
+  }
+
+  async listCommands(teamId: string): Promise<MmCommand[]> {
+    return (await this.#request<MmCommand[] | null>('GET', `/commands?team_id=${teamId}&custom_only=true`)) ?? [];
+  }
+
+  createCommand(command: NewCommand): Promise<MmCommand> {
+    return this.#request('POST', '/commands', command);
+  }
+
+  updateCommand(id: string, command: NewCommand): Promise<MmCommand> {
+    return this.#request('PUT', `/commands/${id}`, { ...command, id });
+  }
+
+  async deleteCommand(id: string): Promise<void> {
+    await this.#request('DELETE', `/commands/${id}`);
+  }
+
+  async openDialog(request: { trigger_id: string; url: string; dialog: MmDialog }): Promise<void> {
+    await this.#request('POST', '/actions/dialogs/open', request);
+  }
+
+  listOAuthApps(): Promise<MmOAuthApp[]> {
+    return this.#pages<MmOAuthApp>('/oauth/apps');
+  }
+
+  createOAuthApp(app: NewOAuthApp): Promise<MmOAuthApp> {
+    return this.#request('POST', '/oauth/apps', app);
+  }
+
+  async exchangeOAuthCode(input: { clientId: string; clientSecret: string; code: string; redirectUri: string }): Promise<MmOAuthTokens> {
+    const response = await fetch(`${this.baseUrl}/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', client_id: input.clientId, client_secret: input.clientSecret, code: input.code, redirect_uri: input.redirectUri }),
+      signal: AbortSignal.timeout(this.#timeoutMs),
+    });
+    metrics.chatRequests.inc({ method: 'POST', status: String(response.status) });
+    const text = await response.text();
+    const parsed = (text ? JSON.parse(text) : {}) as MmOAuthTokens & { id?: string; message?: string };
+    if (!response.ok) throw new ChatApiError(response.status, 'POST', '/oauth/access_token', parsed.id, parsed.message);
+    return parsed;
+  }
+
+  getConfig(): Promise<Record<string, unknown>> {
+    return this.#request('GET', '/config');
+  }
+
+  patchConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.#request('PUT', '/config/patch', patch);
   }
 }

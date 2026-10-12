@@ -79,6 +79,17 @@ export interface ReconcileReport {
   metadataUpdated: number;
   /** Agent bots that are members of Mattermost channels where @brain is not (Q2): they cannot respond there. */
   agentsOutside: { agentMmUserId: string; mmChannelId: string }[];
+  /** The capture sweep's outcome (D50). */
+  capture: CaptureReport;
+}
+
+export interface CaptureReport {
+  /** Channels @brain joined in this sweep. */
+  joined: number;
+  /** Channels @brain was removed from, which the sweep leaves alone. */
+  optedOut: number;
+  /** Channels the sweep could not join (logged). */
+  failed: number;
 }
 
 export class Bridge {
@@ -98,8 +109,11 @@ export class Bridge {
   #stopped = false;
   readonly #relayCatchUp: CoalescedTask;
   readonly #reconcile: CoalescedTask;
+  readonly #capture: CoalescedTask;
   #lastReport: ReconcileReport | undefined;
+  #lastCapture: CaptureReport = { joined: 0, optedOut: 0, failed: 0 };
   readonly #reportedOutside = new Set<string>();
+  readonly #reportedOptedOut = new Set<string>();
   #ops: OpsServer | undefined;
 
   constructor(deps: BridgeDeps) {
@@ -117,6 +131,12 @@ export class Bridge {
         this.#lastReport = await this.#reconcileRun();
       },
       (error) => deps.log.error(errorFields(error), 'Reconciliation failed'),
+    );
+    this.#capture = new CoalescedTask(
+      async () => {
+        this.#lastCapture = await this.#captureRun();
+      },
+      (error) => deps.log.error(errorFields(error), 'Capture sweep failed'),
     );
   }
 
@@ -199,6 +219,7 @@ export class Bridge {
     gaugeFrom('brain_bridge_active_channels', 'Agent-enabled channels', async () => (await store.listChannels('active')).length);
     gaugeFrom('brain_bridge_dead_letters_open', 'Dead letters not yet replayed', () => store.countDeadLetters());
     gaugeFrom('brain_bridge_relay_subscriptions', 'Relay subscriptions the relay confirmed', () => this.#subscriber?.activeCount ?? 0);
+    gaugeFrom('brain_bridge_channels_opted_out', 'Channels @brain was removed from, which the capture sweep leaves alone (D50)', () => this.#lastCapture.optedOut);
     await this.prepare();
     const { publisher } = this.services;
 
@@ -252,9 +273,11 @@ export class Bridge {
         Promise.all([this.catchUpAll(), this.relayCatchUp()]).catch((error: unknown) => log.error(errorFields(error), 'Periodic catch-up failed'));
       }, config.CATCH_UP_INTERVAL_SECONDS * 1000),
       setInterval(() => void this.#reconcile.run(), config.RECONCILE_INTERVAL_SECONDS * 1000),
+      setInterval(() => void this.#capture.run(), config.CAPTURE_SWEEP_SECONDS * 1000),
     );
     void this.#reconcile.run();
-    log.info({ botUserId: this.services.botUserId }, 'Bridge started');
+    void this.#capture.run();
+    log.info({ botUserId: this.services.botUserId, capture: config.BRAIN_CAPTURE_CHANNELS }, 'Bridge started');
   }
 
   async stop(): Promise<void> {
@@ -262,12 +285,57 @@ export class Bridge {
     for (const timer of this.#timers) clearInterval(timer);
     this.#relayCatchUp.cancel();
     this.#reconcile.cancel();
+    this.#capture.cancel();
     this.#events?.close();
     this.#subscriber?.close();
-    await Promise.all([this.#relayCatchUp.idle(), this.#reconcile.idle()]);
+    await Promise.all([this.#relayCatchUp.idle(), this.#reconcile.idle(), this.#capture.idle()]);
     await this.#queue.idle();
     await this.#ops?.close();
     this.#deps.log.info('Bridge stopped');
+  }
+
+  /** Run the capture sweep now (it also runs at start and every CAPTURE_SWEEP_SECONDS); resolves with its report. */
+  async capture(): Promise<CaptureReport> {
+    await this.#capture.run();
+    return this.#lastCapture;
+  }
+
+  /**
+   * The brain reads every channel (D50): add @brain to each public (and, with `all`, private) channel of the
+   * bot's teams that was never captured. The `user_added` event then enables the channel as an invitation
+   * would. A channel someone removed @brain from (state `paused`) is left alone and reported once.
+   */
+  async #captureRun(): Promise<CaptureReport> {
+    const report: CaptureReport = { joined: 0, optedOut: 0, failed: 0 };
+    const { chat, config, log } = this.#deps;
+    if (this.#stopped || config.BRAIN_CAPTURE_CHANNELS === 'opt-in') return report;
+    const { botUserId } = this.services;
+    for (const team of await chat.getMyTeams()) {
+      for (const channel of await chat.getTeamChannels(team.id, { includePrivate: config.BRAIN_CAPTURE_CHANNELS === 'all' })) {
+        if (this.#stopped) return report;
+        if ((channel.type !== 'O' && channel.type !== 'P') || channel.delete_at !== 0) continue;
+        const row = await this.store.getChannel(channel.id);
+        if (row?.state === 'active') continue;
+        if (row?.state === 'paused') {
+          report.optedOut++;
+          if (!this.#reportedOptedOut.has(channel.id)) {
+            this.#reportedOptedOut.add(channel.id);
+            log.info({ mmChannelId: channel.id, channel: channel.display_name }, 'Channel opted out of capture: @brain was removed; not re-adding it');
+          }
+          continue;
+        }
+        if (row?.state === 'archived') continue;
+        try {
+          await chat.addChannelMember(channel.id, botUserId);
+          report.joined++;
+          log.info({ mmChannelId: channel.id, channel: channel.display_name, type: channel.type }, 'Capturing channel (D50)');
+        } catch (error) {
+          report.failed++;
+          log.warn({ mmChannelId: channel.id, channel: channel.display_name, ...errorFields(error) }, 'Could not add @brain to a channel for capture');
+        }
+      }
+    }
+    return report;
   }
 
   /** True once the relay confirmed the bridge's subscription for a mapped channel. */
@@ -620,10 +688,12 @@ export class Bridge {
    * channel's name, about text and visibility, and its relay members against current Mattermost members.
    */
   async #reconcileRun(): Promise<ReconcileReport> {
-    const report: ReconcileReport = { channels: 0, membersAdded: 0, membersRemoved: 0, metadataUpdated: 0, agentsOutside: [] };
+    const report: ReconcileReport = { channels: 0, membersAdded: 0, membersRemoved: 0, metadataUpdated: 0, agentsOutside: [], capture: { joined: 0, optedOut: 0, failed: 0 } };
     if (this.#stopped) return report;
     const { chat, log } = this.#deps;
     const { botUserId, identities, channels: channelService } = this.services;
+    report.capture = await this.#captureRun();
+    this.#lastCapture = report.capture;
     await this.syncChannels();
     const active = await this.store.listChannels('active');
     const relayMembers = await this.#relayMemberLists();

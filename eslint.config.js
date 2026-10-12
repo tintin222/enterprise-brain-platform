@@ -21,6 +21,11 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
+    // The pages run in the browser.
+    files: ['packages/brain-web/src/**'],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
     // CLAUDE.md rule 6: only @brain/shared (ChatClient, RelayClient) talks to upstream libraries.
     // scripts/ is exempt: spike and seed scripts test the raw upstream APIs.
     files: ['packages/bridge/**', 'packages/agent-runtime/**', 'packages/ingestion/**', 'packages/models/**', 'packages/brain/**', 'packages/brain-api/**', 'packages/brain-web/**'],

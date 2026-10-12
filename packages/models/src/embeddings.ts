@@ -51,10 +51,13 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
   readonly name = 'mock';
   readonly model: string;
   readonly dimensions: number;
+  /** Texts sharing no word sit at about 0.9 distance; sharing a few words brings them under 0.7. */
+  readonly relevanceDistance: number;
 
-  constructor(dimensions = 1536) {
+  constructor(dimensions = 1536, relevanceDistance = 0.7) {
     this.dimensions = dimensions;
     this.model = `mock-${dimensions}`;
+    this.relevanceDistance = relevanceDistance;
   }
 
   // The purpose makes no difference to the mock: queries and documents share one space.
@@ -77,12 +80,15 @@ export interface GeminiEmbeddingOptions {
   /** Inputs are cut here; gemini-embedding-001 accepts 2,048 tokens (spike B6). */
   maxChars?: number;
   batchSize?: number;
+  relevanceDistance?: number;
 }
 
 export class GeminiEmbeddingProvider implements EmbeddingProvider {
   readonly name = 'google';
   readonly model: string;
   readonly dimensions: number;
+  /** gemini-embedding-001 scores an unrelated pair at about 0.70 similarity and a related one at 0.86 (spike B6). */
+  readonly relevanceDistance: number;
   readonly #api: GeminiEmbeddingApi;
   readonly #maxChars: number;
   readonly #batchSize: number;
@@ -91,6 +97,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     this.#api = options.api ?? new GoogleGenAI({ ...(options.apiKey ? { apiKey: options.apiKey } : {}) }).models;
     this.model = options.model ?? 'gemini-embedding-001';
     this.dimensions = options.dimensions ?? 1536;
+    this.relevanceDistance = options.relevanceDistance ?? 0.28;
     this.#maxChars = options.maxChars ?? 7000;
     this.#batchSize = options.batchSize ?? 100;
   }

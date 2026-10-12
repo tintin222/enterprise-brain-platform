@@ -6,6 +6,9 @@
 //   the relay out, for a relay this machine cannot reach (staging; the bridge grants the membership, D45).
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { BrainStore } from '@brain/brain';
+import { ensureMattermostIntegration } from '@brain/brain-api';
+import { createLogger, createPool, KeyStore, MattermostChatClient } from '@brain/shared';
 import { MattermostApi, MattermostError, type MmUser } from '../lib/mattermost.ts';
 import { identityFromHex } from '../lib/nostr.ts';
 import { canAuthenticate, ensureRelayMember } from '../lib/relay-admin.ts';
@@ -135,6 +138,27 @@ if (!(await tokenBelongsToAdmin(env.MM_ADMIN_TOKEN))) {
   const token = await admin.post<{ token: string }>(`/users/${me.id}/tokens`, { description: 'agent provisioning (pnpm dev:seed)' });
   updateEnvFile('MM_ADMIN_TOKEN', token.token);
   console.log(`Created @${adminUsername} access token for agent provisioning (MM_ADMIN_TOKEN in ${envName})`);
+}
+
+// --- The brain (docs/brain/01-phase0-plan.md): Mattermost's allow-list, the OAuth app for the pages, the /brain command ---
+{
+  const brainEnv = loadEnv();
+  const pool = createPool(requireValue(brainEnv, 'STATE_DATABASE_URL'));
+  try {
+    const store = new BrainStore(pool);
+    await store.init();
+    const result = await ensureMattermostIntegration({
+      adminChat: new MattermostChatClient(mmUrl, requireValue(brainEnv, 'MM_ADMIN_TOKEN')),
+      store,
+      keyStore: new KeyStore(pool, requireValue(brainEnv, 'KEY_ENCRYPTION_KEY')),
+      publicUrl: brainEnv.BRAIN_PUBLIC_URL || 'http://localhost:9120',
+      internalUrl: brainEnv.BRAIN_INTERNAL_URL || 'http://host.docker.internal:9120',
+      log: createLogger('seed', 'warn'),
+    });
+    console.log(`Brain registered with Mattermost: /brain in ${result.commands.length} team(s), OAuth app ${result.oauthClientId}, allow-listed ${result.allowedHost}`);
+  } finally {
+    await pool.end();
+  }
 }
 
 // --- Relay ---

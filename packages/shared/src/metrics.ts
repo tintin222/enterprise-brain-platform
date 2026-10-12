@@ -9,11 +9,13 @@ import { errorFields, type Logger } from './logger.ts';
 export const metricsRegistry = new Registry();
 collectDefaultMetrics({ register: metricsRegistry, prefix: 'brain_' });
 
-function counter<L extends string>(name: string, help: string, labelNames: readonly L[] = []): Counter<L> {
+/** A counter in the shared registry (created once per process). */
+export function counter<L extends string>(name: string, help: string, labelNames: readonly L[] = []): Counter<L> {
   return (metricsRegistry.getSingleMetric(name) as Counter<L> | undefined) ?? new Counter({ name, help, labelNames, registers: [metricsRegistry] });
 }
 
-function histogram<L extends string>(name: string, help: string, labelNames: readonly L[], buckets: number[]): Histogram<L> {
+/** A histogram in the shared registry (created once per process). */
+export function histogram<L extends string>(name: string, help: string, labelNames: readonly L[], buckets: number[]): Histogram<L> {
   return (metricsRegistry.getSingleMetric(name) as Histogram<L> | undefined) ?? new Histogram({ name, help, labelNames, buckets, registers: [metricsRegistry] });
 }
 

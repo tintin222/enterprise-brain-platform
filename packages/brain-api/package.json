@@ -1,0 +1,25 @@
+{
+  "name": "@brain/brain-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@brain/agent-runtime": "workspace:*",
+    "@brain/brain": "workspace:*",
+    "@brain/models": "workspace:*",
+    "@brain/shared": "workspace:*",
+    "@fastify/cookie": "11.1.2",
+    "@fastify/multipart": "10.1.2",
+    "@fastify/static": "10.1.5",
+    "@fastify/swagger": "9.9.1",
+    "fastify": "5.12.5",
+    "fastify-type-provider-zod": "7.0.0",
+    "zod": "4.6.5"
+  }
+}

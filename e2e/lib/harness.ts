@@ -1,9 +1,12 @@
 // Shared setup for end-to-end tests against the local stack (`pnpm dev:up && pnpm dev:seed`).
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:net';
 import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
-import { PostgresBrainClient } from '@brain/brain';
+import { BrainStore, PostgresBrainClient } from '@brain/brain';
+import { AccessService, brainApiConfigSchema, buildApp, startEmbeddingWorker, TokenSigner, type BrainApiConfig, type EmbeddingWorker } from '@brain/brain-api';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
+import { embeddingProviderFromConfig } from '@brain/models';
 import { Ingestion, ingestionConfigSchema } from '@brain/ingestion';
 import { MattermostApi, type MmPost, type MmUser } from '@brain/scripts/lib/mattermost.ts';
 import {
@@ -68,8 +71,9 @@ export class Stack {
 
   constructor(overrides: Record<string, string> = {}) {
     loadDotEnv();
-    // Ops endpoints on free ports, so services started in one process do not collide.
-    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '60', BRIDGE_OPS_PORT: '0', RUNTIME_OPS_PORT: '0', INGESTION_OPS_PORT: '0', ...overrides };
+    // Ops endpoints on free ports, so services started in one process do not collide. Capture stays opt-in (D5)
+    // unless a test asks for the sweep (D50), so the other tests keep control over which channels @brain joins.
+    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '60', BRIDGE_OPS_PORT: '0', RUNTIME_OPS_PORT: '0', INGESTION_OPS_PORT: '0', BRAIN_CAPTURE_CHANNELS: 'opt-in', CAPTURE_SWEEP_SECONDS: '5', ...overrides };
     this.config = parseConfig(bridgeConfigSchema, this.env);
     this.pool = createPool(this.config.STATE_DATABASE_URL);
     this.relay = new BuzzRelayClient(this.config.RELAY_HTTP_URL, { perKeyPerSecond: this.config.RELAY_REQUESTS_PER_SECOND });
@@ -259,4 +263,72 @@ export class Stack {
     await bridge.ready;
     return bridge;
   }
+
+  /**
+   * Start the brain API in-process on a free port, with the mock embedding provider, reachable by browsers at
+   * `url` and by Mattermost (in Docker) at `internalUrl`. Register it with Mattermost through
+   * `POST /api/v1/brain/setup/mattermost` when a test needs the command or sign-in paths.
+   */
+  async startBrainApi(overrides: Record<string, string> = {}): Promise<BrainApiHandle> {
+    const port = await freePort();
+    const config = parseConfig(brainApiConfigSchema, {
+      ...this.env,
+      BRAIN_API_PORT: String(port),
+      BRAIN_PUBLIC_URL: `http://127.0.0.1:${port}`,
+      BRAIN_INTERNAL_URL: `http://host.docker.internal:${port}`,
+      BRAIN_WEB_DIR: '',
+      EMBEDDING_PROVIDER: 'mock',
+      ...overrides,
+    });
+    const store = new BrainStore(this.pool);
+    await store.init();
+    const chat = new MattermostChatClient(config.MM_URL, config.MM_BRIDGE_TOKEN);
+    const adminChat = new MattermostChatClient(config.MM_URL, config.MM_ADMIN_TOKEN);
+    const botUserId = (await chat.getMe()).id;
+    const embeddings = embeddingProviderFromConfig(config);
+    const access = new AccessService(chat, store);
+    const tokens = new TokenSigner(config.BRAIN_SESSION_SECRET);
+    const log = this.log('brain-api-e2e');
+    const app = await buildApp({ config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log });
+    const worker = embeddings ? startEmbeddingWorker({ store, embeddings, log, intervalMs: 500, batchSize: 64 }) : undefined;
+    await app.listen({ host: '0.0.0.0', port });
+    return {
+      url: config.BRAIN_PUBLIC_URL,
+      internalUrl: config.BRAIN_INTERNAL_URL,
+      token: config.BRAIN_API_TOKEN,
+      config,
+      store,
+      access,
+      tokens,
+      worker,
+      stop: async () => {
+        await worker?.stop();
+        await app.close();
+      },
+    };
+  }
+}
+
+export interface BrainApiHandle {
+  url: string;
+  internalUrl: string;
+  token: string;
+  config: BrainApiConfig;
+  store: BrainStore;
+  access: AccessService;
+  tokens: TokenSigner;
+  worker: EmbeddingWorker | undefined;
+  stop(): Promise<void>;
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
 }

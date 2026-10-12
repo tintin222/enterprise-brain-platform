@@ -199,6 +199,8 @@ export interface SearchParams {
   query: string;
   /** The query's embedding; without it the search is keyword only. */
   embedding?: number[];
+  /** Semantic hits farther than this (cosine distance) are noise and dropped; default 0.5. */
+  maxDistance?: number;
   scope: Scope;
   filters?: SearchFilters;
   limit?: number;

@@ -6,6 +6,8 @@ import type { Citation, EntityType, Scope, SearchFilters, SearchParams, SearchRe
 
 const CANDIDATES = 60;
 const RRF_K = 60;
+/** A vector index returns its k nearest whatever the query; beyond this cosine distance a hit is noise. */
+const DEFAULT_MAX_DISTANCE = 0.5;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const SNIPPET_CHARS = 300;
@@ -101,11 +103,13 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
   const chunkFilters = chunkFilterSql(input.filters, params);
   const candidates = params.add(CANDIDATES);
   const vectorHalf = input.embedding
-    ? `SELECT c.id, c.entity_id, (c.embedding <=> ${params.add(toVectorLiteral(input.embedding))}::vector) AS distance
-       FROM brain.chunks c
-       WHERE c.embedding IS NOT NULL AND ${scope}${chunkFilters}
-       ORDER BY distance
-       LIMIT ${candidates}`
+    ? `SELECT id, entity_id, distance FROM (
+         SELECT c.id, c.entity_id, (c.embedding <=> ${params.add(toVectorLiteral(input.embedding))}::vector) AS distance
+         FROM brain.chunks c
+         WHERE c.embedding IS NOT NULL AND ${scope}${chunkFilters}
+         ORDER BY distance
+         LIMIT ${candidates}
+       ) nearest WHERE distance <= ${params.add(input.maxDistance ?? DEFAULT_MAX_DISTANCE)}`
     : `SELECT NULL::text AS id, NULL::text AS entity_id, 0::float8 AS distance WHERE FALSE`;
   const entityFilters = entityFilterSql(input.filters, params);
   const limit = params.add(Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT));

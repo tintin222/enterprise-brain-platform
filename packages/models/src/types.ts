@@ -90,6 +90,11 @@ export interface EmbeddingProvider {
   readonly name: string;
   readonly model: string;
   readonly dimensions: number;
+  /**
+   * Cosine distance above which a nearest neighbour is noise for this model (a vector index always returns
+   * its k nearest, related or not). Search drops such hits.
+   */
+  readonly relevanceDistance: number;
   /** Unit-length vectors, one per text, in order. */
   embed(texts: string[], purpose: EmbeddingPurpose): Promise<number[][]>;
 }

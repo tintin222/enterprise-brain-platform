@@ -61,6 +61,7 @@ export class PostgresBrainClient implements BrainClient {
     const results = await this.store.search({
       query: input.query,
       embedding: await this.#embedQuery(input.query),
+      ...(this.#embeddings ? { maxDistance: this.#embeddings.relevanceDistance } : {}),
       scope: { kind: 'channel', channelId: input.channelId, ...(link ? { containerId: link.containerId } : {}) },
       limit: input.limit,
     });

@@ -85,6 +85,108 @@ export interface MmBot {
   delete_at: number;
 }
 
+export interface NewChannel {
+  team_id: string;
+  name: string;
+  display_name: string;
+  type: 'O' | 'P';
+  purpose?: string;
+  header?: string;
+}
+
+/** A downloaded attachment. */
+export interface MmFile {
+  bytes: Uint8Array;
+  contentType: string | null;
+}
+
+/** A custom slash command (Mattermost integrations; spike B1). The token authenticates Mattermost's calls to us. */
+export interface MmCommand {
+  id: string;
+  token: string;
+  team_id: string;
+  trigger: string;
+  method: string;
+  url: string;
+  auto_complete: boolean;
+  auto_complete_desc?: string;
+  auto_complete_hint?: string;
+  display_name?: string;
+  description?: string;
+  username?: string;
+  icon_url?: string;
+  delete_at?: number;
+}
+
+export interface NewCommand {
+  team_id: string;
+  trigger: string;
+  method: 'P' | 'G';
+  url: string;
+  auto_complete: boolean;
+  auto_complete_desc?: string;
+  auto_complete_hint?: string;
+  display_name?: string;
+  description?: string;
+  username?: string;
+  icon_url?: string;
+}
+
+/** An interactive dialog (a form Mattermost shows for a trigger id; spike B1). */
+export interface MmDialogElement {
+  display_name: string;
+  name: string;
+  type: 'text' | 'textarea' | 'select' | 'bool' | 'radio';
+  subtype?: 'text' | 'email' | 'number' | 'password' | 'tel' | 'url';
+  placeholder?: string;
+  help_text?: string;
+  optional?: boolean;
+  min_length?: number;
+  max_length?: number;
+  default?: string | boolean;
+  options?: { text: string; value: string }[];
+  data_source?: 'users' | 'channels';
+}
+
+export interface MmDialog {
+  callback_id: string;
+  title: string;
+  introduction_text?: string;
+  elements: MmDialogElement[];
+  submit_label?: string;
+  notify_on_cancel?: boolean;
+  state?: string;
+}
+
+/** An OAuth 2.0 app registered with Mattermost as the provider (spike B3). */
+export interface MmOAuthApp {
+  id: string;
+  client_secret: string;
+  name: string;
+  description?: string;
+  callback_urls: string[];
+  homepage: string;
+  is_trusted: boolean;
+  delete_at?: number;
+}
+
+export interface NewOAuthApp {
+  name: string;
+  description?: string;
+  callback_urls: string[];
+  homepage: string;
+  is_trusted: boolean;
+}
+
+export interface MmOAuthTokens {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  id_token?: string;
+  scope?: string;
+}
+
 /** One frame from the Mattermost WebSocket. */
 export interface ChatEvent {
   event: string;
