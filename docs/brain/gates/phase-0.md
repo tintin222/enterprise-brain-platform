@@ -2,6 +2,8 @@
 
 Run on 2026-10-12 against branch `brain-phase0` (the Phase 0 commits), following the procedure in `01-phase0-plan.md` section 19. The spec's gate for Phase 0 (`docs/COMPANY_BRAIN_SPEC.md` section 11): **clean install from scratch passes its test; any entity is searchable within 5 s of creation.**
 
+**Accepted by the owner on 2026-10-12** ("accept phase 0"), with the question-search limit of item 3 carried into Phase 1 as proposed (Q24).
+
 Verdict: **passed, with one measured limit to decide on.** Both spec criteria hold, on this machine and on a fresh CI runner (item 1). NFR-1 (item 3) is met for term searches after a ranking change made during the gate (D61) and not for the keyword fallback that natural-language questions take, which is put to the owner with a proposal. Item 4 (the export round trip) is met in a weaker form than the plan wrote, see there. The first CI run also found a defect the local stack had hidden (item 1, the Linux `host.docker.internal` case), fixed the same evening. What was not verified is in item 6.
 
 ## 1. Clean install (NFR-12)

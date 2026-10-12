@@ -163,6 +163,7 @@ Company Brain questions (asked with `docs/brain/00-gap-analysis.md` section 9, a
 | Q21 | Add pgvector to our state database image for vector search? | Yes (D52). Owner. |
 | Q22 | Embeddings from Google's model with the Gemini key? | Yes (D53). Owner. |
 | Q23 | New libraries for Phase 0 (Google SDK, Fastify, React, Vite, FormatJS)? | Yes (D54). Owner. |
+| Q24 | Phase 0 gate: accept with the measured keyword fallback (natural-language questions rank every chunk holding any of their words: p95 6.5 s at 250 k chunks), or fix it first? | Accepted on 2026-10-12 ("accept phase 0"). The fallback improvement is a Phase 1 task: word statistics kept by the embedding worker so the rarest query words choose the candidates, measured again with `pnpm brain:bench`. |
 
 ## 5. Licence guardrails
 
