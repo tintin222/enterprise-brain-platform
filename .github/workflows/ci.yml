@@ -1,0 +1,79 @@
+# Checks on every push and pull request (spec section 12; docs/brain/01-phase0-plan.md section 13):
+# static checks, unit tests, the secret scan and the generated API reference; the end-to-end suite against the
+# local stack; and, on demand or nightly, the clean-install test (NFR-12).
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+
+jobs:
+  checks:
+    name: Typecheck, lint, unit tests, secrets, API reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm check:secrets
+      - run: pnpm brain:api-docs --check
+      - run: pnpm --filter @brain/brain-web build
+
+  e2e:
+    name: End-to-end tests on the local stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: checks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start the stack (our Mattermost build) and seed it
+        run: |
+          pnpm dev:up --enterprise-brain
+          pnpm dev:seed
+      - name: End-to-end suite
+        run: pnpm test:e2e 2>&1 | tee e2e.log
+      - name: No secret in the logs
+        run: pnpm check:logs e2e.log
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose --project-name enterprise-brain --file infra/compose.yml --file infra/compose.chat.yml --env-file .env logs --tail 200
+
+  install:
+    name: Clean install (NFR-12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install from nothing, self-test, wipe
+        run: ./install/test.sh
