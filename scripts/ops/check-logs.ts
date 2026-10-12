@@ -1,13 +1,15 @@
-// pnpm check:logs <file> [<file> ...]: fail if any secret appears in the given log files (Phase 6 acceptance:
-// no secret in logs). Secrets are the .env secrets plus every secret in the key store, decrypted here and
-// searched for as text, hex and base64. Matches are reported by secret name only, never by value.
+// pnpm check:logs [--env-only] <file> [<file> ...]: fail if any secret appears in the given log files (Phase 6
+// acceptance: no secret in logs). Secrets are the .env secrets plus every secret in the key store, decrypted here
+// and searched for as text, hex and base64. Matches are reported by secret name only, never by value.
+// --env-only skips the key store, for a state database this machine cannot reach (staging, ENV_FILE=.env.staging).
 import { readFileSync } from 'node:fs';
 import { createPool, KeyStore } from '@brain/shared';
 import { loadEnv, requireValue } from '../lib/env.ts';
 
-const files = process.argv.slice(2);
+const envOnly = process.argv.includes('--env-only');
+const files = process.argv.slice(2).filter((arg) => arg !== '--env-only');
 if (files.length === 0) {
-  console.error('Usage: pnpm check:logs <log file> [<log file> ...]');
+  console.error('Usage: pnpm check:logs [--env-only] <log file> [<log file> ...]');
   process.exit(2);
 }
 
@@ -39,16 +41,20 @@ const add = (name: string, value: string | Buffer): void => {
 };
 for (const name of ENV_SECRETS) if (env[name]) add(name, env[name]);
 
-const pool = createPool(requireValue(env, 'STATE_DATABASE_URL'));
-try {
-  const keyStore = new KeyStore(pool, requireValue(env, 'KEY_ENCRYPTION_KEY'));
-  const rows = await pool.query<{ ref: string; kind: string }>('SELECT ref, kind FROM identity.secrets');
-  for (const row of rows.rows) {
-    const value = await keyStore.getSecret(row.ref);
-    if (value) add(`key store ${row.kind} (${row.ref})`, row.kind === 'agent-token' ? value.toString('utf8') : value);
+if (envOnly) {
+  console.log('Key store secrets not checked (--env-only).');
+} else {
+  const pool = createPool(requireValue(env, 'STATE_DATABASE_URL'));
+  try {
+    const keyStore = new KeyStore(pool, requireValue(env, 'KEY_ENCRYPTION_KEY'));
+    const rows = await pool.query<{ ref: string; kind: string }>('SELECT ref, kind FROM identity.secrets');
+    for (const row of rows.rows) {
+      const value = await keyStore.getSecret(row.ref);
+      if (value) add(`key store ${row.kind} (${row.ref})`, row.kind === 'agent-token' ? value.toString('utf8') : value);
+    }
+  } finally {
+    await pool.end();
   }
-} finally {
-  await pool.end();
 }
 
 let found = 0;

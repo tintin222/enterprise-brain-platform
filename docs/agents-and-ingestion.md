@@ -22,6 +22,8 @@ An agent is a product object that users create in the enterprise brain. The runt
 
 If the brain already stores agent definitions, read them through an adapter and keep only the chat-specific fields (keys, bot ids) in our database.
 
+As built, agent-runtime re-reads the registry every `AGENT_REFRESH_SECONDS` (30), and at once when a message names a key it does not know (at most every 2 seconds), so an agent created through the admin API answers its first mention (D47).
+
 ### A.2 Provisioning an agent
 
 One operation, safe to re-run:

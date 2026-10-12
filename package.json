@@ -35,6 +35,8 @@
     "relay:rebuild": "tsx scripts/ops/relay-rebuild.ts",
     "check:logs": "tsx scripts/ops/check-logs.ts",
     "load-test": "tsx scripts/load/run.ts",
+    "staging:railway": "ENV_FILE=.env.staging tsx scripts/staging/railway.ts",
+    "staging:agent": "tsx scripts/staging/agent.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r --parallel run typecheck",
     "lint": "eslint .",
     "test": "vitest run",

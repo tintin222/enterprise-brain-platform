@@ -52,6 +52,7 @@ docs/
 infra/                 Docker Compose for the local stack (Mattermost, Buzz relay, databases)
   mostlymatter/        image with the uncapped Mostlymatter build (compose.mostlymatter.yml selects it)
   services/            one image for the bridge, agent-runtime, ingestion and admin API (staging, docs/staging.md)
+  staging/             one-line Dockerfiles that keep staging's third-party images pinned on Railway
   third_party/buzz/    licence and notice for the compose services adapted from Buzz
 packages/
   shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, local brain
@@ -66,6 +67,7 @@ scripts/
   keys/                key rotation
   ops/                 relay wipe and rebuild, log secret check
   load/                Phase 6 load test
+  staging/             staging on Railway: setup and agent creation
 e2e/                   end-to-end tests against the local stack
 branding/              Enterprise Brain logo: SVG sources and PNG exports (branding/README.md)
 ```
@@ -92,8 +94,10 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm dead-letter list \| show <id> \| replay <id...> \| replay --all` | Inspect and replay what the bridge gave up on (docs/operations.md section 3) |
 | `pnpm keys:rotate-master`, `keys:rotate-reader [--finish]`, `keys:rotate-bridge [--finish]` | Rotate the master key, the reader key or the bridge key (docs/operations.md section 4) |
 | `pnpm relay:wipe --yes`, `pnpm relay:rebuild` | Empty the local relay; prepare our services to rebuild it from Mattermost (docs/operations.md section 5) |
-| `pnpm check:logs <files>` | Fail if any secret from `.env` or the key store appears in log files |
+| `pnpm check:logs [--env-only] <files>` | Fail if any secret from `.env` (or `ENV_FILE`) or the key store appears in log files; `--env-only` skips the key store |
 | `pnpm load-test` | The Phase 6 load test at Q7 scale, on Mostlymatter with the three services running (docs/load-test.md) |
+| `pnpm staging:railway [step ...]` | Create or update staging on Railway (docs/staging.md); secrets live in `.env.staging`. Steps: `env`, `services`, `data`, `relay`, `mattermost`, `seed`, `app` |
+| `pnpm staging:agent --handle <h> --name "<Name>" [--model echo]` | Create or update an agent on staging through the admin API, from a temporary Railway sandbox |
 | `pnpm gen:emoji` | Regenerate the bridge's reaction emoji table from the pinned emoji-datasource (D31) |
 | `pnpm typecheck` / `pnpm lint` | Static checks |
 | `pnpm test` | Unit tests (no services needed) |

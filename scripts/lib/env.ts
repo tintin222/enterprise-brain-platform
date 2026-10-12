@@ -7,7 +7,8 @@ import { parseEnv } from 'node:util';
 import { newSecretKeyHex, pubkeyOf } from './nostr.ts';
 
 export const repoRoot = path.resolve(import.meta.dirname, '../..');
-export const envPath = path.join(repoRoot, '.env');
+/** The env file scripts read and write: `.env`, or the file ENV_FILE names (staging uses `.env.staging`). */
+export const envPath = path.resolve(repoRoot, process.env.ENV_FILE ?? '.env');
 export const envExamplePath = path.join(repoRoot, '.env.example');
 
 export type EnvValues = Record<string, string>;
@@ -40,7 +41,7 @@ export function deriveValues(values: EnvValues): EnvValues {
   const derived: EnvValues = {};
   if (values.BRIDGE_SECRET_KEY) derived.RELAY_OWNER_PUBKEY = pubkeyOf(values.BRIDGE_SECRET_KEY);
   if (values.STATE_DB_PASSWORD && values.STATE_DB_PORT) {
-    derived.STATE_DATABASE_URL = `postgres://brain:${values.STATE_DB_PASSWORD}@localhost:${values.STATE_DB_PORT}/brain`;
+    derived.STATE_DATABASE_URL = `postgres://brain:${values.STATE_DB_PASSWORD}@${values.STATE_DB_HOST || 'localhost'}:${values.STATE_DB_PORT}/brain`;
   }
   return derived;
 }
@@ -123,7 +124,7 @@ export function removeFromEnvFile(key: string): void {
 
 /** Load .env for a script; fails with a hint when the stack has not been set up. */
 export function loadEnv(): EnvValues {
-  if (!existsSync(envPath)) throw new Error('No .env found. Run `pnpm dev:up` first.');
+  if (!existsSync(envPath)) throw new Error(`No ${path.basename(envPath)} found. Run \`pnpm dev:up\` (or \`pnpm staging:railway\` for .env.staging) first.`);
   return readEnvFile();
 }
 

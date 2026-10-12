@@ -20,6 +20,7 @@ import {
   signerFromHex,
   startOpsServer,
   tagValue,
+  tagValues,
   threadRoot,
   type BrainClient,
   type KeyStore,
@@ -43,7 +44,8 @@ export const APOLOGY = "Sorry, I couldn't answer that just now.";
 export const DECLINED = "Sorry, I can't help with that.";
 const MAX_ATTEMPTS = 3;
 const TYPING_INTERVAL_MS = 4000;
-const AGENT_REFRESH_MS = 30_000;
+/** A message naming an unknown key refreshes the agent list, at most this often (an agent created moments ago). */
+const AGENT_REFRESH_ON_DEMAND_MS = 2000;
 /** Knowledge passages per answer. */
 const KNOWLEDGE_LIMIT = 5;
 
@@ -83,6 +85,7 @@ export class AgentRuntime {
   #subscriber: RelaySubscriber | undefined;
   #watcher: ChannelWatcher | undefined;
   #refreshTimer: NodeJS.Timeout | undefined;
+  #agentsRefreshedAt = 0;
   #stopped = false;
   #ops: OpsServer | undefined;
   readonly #catchUp: CoalescedTask;
@@ -124,7 +127,10 @@ export class AgentRuntime {
     await migrate(pool, 'identity', IDENTITY_MIGRATIONS_DIR);
     await migrate(pool, 'runtime', RUNTIME_MIGRATIONS_DIR);
     await this.refreshAgents();
-    this.#refreshTimer = setInterval(() => void this.refreshAgents().catch((error: unknown) => log.error(errorFields(error), 'Agent refresh failed')), AGENT_REFRESH_MS);
+    this.#refreshTimer = setInterval(
+      () => void this.refreshAgents().catch((error: unknown) => log.error(errorFields(error), 'Agent refresh failed')),
+      config.AGENT_REFRESH_SECONDS * 1000,
+    );
 
     const subscriber = new RelaySubscriber({
       url: config.RELAY_WS_URL,
@@ -171,6 +177,7 @@ export class AgentRuntime {
   }
 
   async refreshAgents(): Promise<void> {
+    this.#agentsRefreshedAt = Date.now();
     const all = await this.#agents.listAll();
     this.#active = all.filter((agent) => agent.status === 'active');
     this.#byId = new Map(all.map((agent) => [agent.agentId, agent]));
@@ -219,6 +226,10 @@ export class AgentRuntime {
     }
     if (event.kind !== 9) return;
     if (!this.#members.has(channelId)) await this.#loadMembers(channelId);
+    // An agent created moments ago (admin API, D43) can be mentioned before the periodic refresh sees it.
+    if (tagValues(event, 'p').some((pubkey) => !this.#agentPubkeys.has(pubkey)) && Date.now() - this.#agentsRefreshedAt > AGENT_REFRESH_ON_DEMAND_MS) {
+      await this.refreshAgents();
+    }
     const { config, log } = this.#deps;
     const result = evaluateTriggers({
       event,

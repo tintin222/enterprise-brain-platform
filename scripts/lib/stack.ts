@@ -15,10 +15,10 @@ async function waitForUrl(name: string, url: string, timeoutMs: number): Promise
   }
 }
 
-/** Wait until Mattermost and the relay answer their readiness endpoints. */
-export async function waitForStack(env: EnvValues, timeoutMs = 300_000): Promise<void> {
+/** Wait until Mattermost and the relay answer their readiness endpoints (`relay: false` waits for Mattermost only). */
+export async function waitForStack(env: EnvValues, timeoutMs = 300_000, { relay = true } = {}): Promise<void> {
   await Promise.all([
     waitForUrl('Mattermost', `${requireValue(env, 'MM_URL')}/api/v4/system/ping`, timeoutMs),
-    waitForUrl('Buzz relay', `${requireValue(env, 'RELAY_HTTP_URL')}/_readiness`, timeoutMs),
+    relay ? waitForUrl('Buzz relay', `${requireValue(env, 'RELAY_HTTP_URL')}/_readiness`, timeoutMs) : undefined,
   ]);
 }

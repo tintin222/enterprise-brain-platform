@@ -28,10 +28,8 @@ These change things outside this repository (new public repositories, app store 
    - The desktop (`mattermost/desktop`) and mobile (`mattermost/mattermost-mobile`) clients are Apache-2.0: fork them, change the name, icons (`branding/png/app-icon-1024.png`) and default server URL, and sign them with our own Apple and Google developer accounts.
    - Mobile push needs our own `mattermost-push-proxy` (Apache-2.0) with our APNs and FCM credentials.
    - Point the server's `EmailSettings.PushNotificationServer` at that proxy. The relay's own push gateway stays disabled (D16).
-3. **Staging (task 1 in a real environment).** The owner has a Railway account; the plan for running the stack there is in `docs/staging.md`.
-   - Deploy the stack with the Mostlymatter image and the services image.
-   - Keep secrets in the host's secret store (docs/operations.md section 4).
-   - Keep the relay internal, with TLS for Mattermost.
-   - Run the load test there with production-like resources (docs/load-test.md).
+3. **Staging (task 1 in a real environment).** Deployed on Railway on 2026-10-12 (docs/staging.md): Mostlymatter, the relay kept internal, TLS for Mattermost, secrets as Railway variables, and an echo agent answering through the public address. Left:
+   - Run the load test there with production-like resources (docs/load-test.md). It must run inside the private network and leaves 500 test people behind.
+   - Configure SMTP for email and schedule volume backups (both available on Pro).
 
 Phase 7's acceptance criterion: a new workspace can be created, branded clients connect, and an agent created in the brain can be added to a channel without a terminal. The last part is in place (the admin API); the first two depend on items 1 to 3.

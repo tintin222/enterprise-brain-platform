@@ -2,14 +2,15 @@
 //   Mattermost: enable bot accounts and user access tokens, apply the Enterprise Brain name and logo, create
 //   the dev team, the admin, two people (alice, bob) and the @brain bridge bot (system admin) with an access
 //   token written to .env.
-//   Relay: check the bridge key is the relay owner and make the reader key a relay member.
+//   Relay: check the bridge key is the relay owner and make the reader key a relay member. `--skip-relay` leaves
+//   the relay out, for a relay this machine cannot reach (staging; the bridge grants the membership, D45).
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { MattermostApi, MattermostError, type MmUser } from '../lib/mattermost.ts';
 import { identityFromHex } from '../lib/nostr.ts';
 import { canAuthenticate, ensureRelayMember } from '../lib/relay-admin.ts';
 import { waitForStack } from '../lib/stack.ts';
-import { loadEnv, repoRoot, requireValue, updateEnvFile } from '../lib/env.ts';
+import { envPath, loadEnv, repoRoot, requireValue, updateEnvFile } from '../lib/env.ts';
 
 const env = loadEnv();
 const mmUrl = requireValue(env, 'MM_URL');
@@ -19,8 +20,10 @@ const adminPassword = requireValue(env, 'MM_ADMIN_PASSWORD');
 const personPassword = requireValue(env, 'MM_PERSON_PASSWORD');
 const people = ['alice', 'bob'];
 const botUsername = 'brain';
+const skipRelay = process.argv.includes('--skip-relay');
+const envName = path.basename(envPath);
 
-await waitForStack(env);
+await waitForStack(env, 300_000, { relay: !skipRelay });
 const anonymous = new MattermostApi(mmUrl);
 
 // --- Mattermost admin ---
@@ -62,7 +65,7 @@ console.log('Enabled bot accounts and user access tokens; allowed 10,000 members
 // --- Team and people ---
 let team = await admin.find<{ id: string }>(`/teams/name/${teamName}`);
 if (!team) {
-  team = await admin.post<{ id: string }>('/teams', { name: teamName, display_name: 'Brain Dev', type: 'O' });
+  team = await admin.post<{ id: string }>('/teams', { name: teamName, display_name: env.MM_TEAM_DISPLAY_NAME || 'Brain Dev', type: 'O' });
   console.log(`Created team ${teamName}`);
 }
 const teamId = team.id;
@@ -112,7 +115,7 @@ async function tokenBelongsToBot(token: string | undefined): Promise<boolean> {
 if (!(await tokenBelongsToBot(env.MM_BRIDGE_TOKEN))) {
   const token = await admin.post<{ token: string }>(`/users/${botId}/tokens`, { description: 'bridge (pnpm dev:seed)' });
   updateEnvFile('MM_BRIDGE_TOKEN', token.token);
-  console.log('Created @brain access token (MM_BRIDGE_TOKEN in .env)');
+  console.log(`Created @brain access token (MM_BRIDGE_TOKEN in ${envName})`);
 }
 
 // Agent provisioning creates bots, which Mattermost refuses to bot accounts (even system admins), so it
@@ -128,21 +131,25 @@ async function tokenBelongsToAdmin(token: string | undefined): Promise<boolean> 
 if (!(await tokenBelongsToAdmin(env.MM_ADMIN_TOKEN))) {
   const token = await admin.post<{ token: string }>(`/users/${me.id}/tokens`, { description: 'agent provisioning (pnpm dev:seed)' });
   updateEnvFile('MM_ADMIN_TOKEN', token.token);
-  console.log(`Created @${adminUsername} access token for agent provisioning (MM_ADMIN_TOKEN in .env)`);
+  console.log(`Created @${adminUsername} access token for agent provisioning (MM_ADMIN_TOKEN in ${envName})`);
 }
 
 // --- Relay ---
-const bridge = identityFromHex(requireValue(env, 'BRIDGE_SECRET_KEY'));
-const reader = identityFromHex(requireValue(env, 'READER_SECRET_KEY'));
-if (requireValue(env, 'RELAY_OWNER_PUBKEY') !== bridge.pubkey) {
-  throw new Error('RELAY_OWNER_PUBKEY does not match BRIDGE_SECRET_KEY. Run `pnpm dev:up` to re-derive it, then restart the relay.');
-}
-if (!(await canAuthenticate(env, bridge))) throw new Error('The bridge key cannot authenticate to the relay; is it the relay owner?');
-if (!(await canAuthenticate(env, reader))) {
-  await ensureRelayMember(env, bridge, reader.pubkey);
-  if (!(await canAuthenticate(env, reader))) throw new Error('Reader key still cannot authenticate after being added as a relay member');
-  console.log('Added the reader key as a relay member');
+if (!skipRelay) {
+  const bridge = identityFromHex(requireValue(env, 'BRIDGE_SECRET_KEY'));
+  const reader = identityFromHex(requireValue(env, 'READER_SECRET_KEY'));
+  if (requireValue(env, 'RELAY_OWNER_PUBKEY') !== bridge.pubkey) {
+    throw new Error('RELAY_OWNER_PUBKEY does not match BRIDGE_SECRET_KEY. Run `pnpm dev:up` to re-derive it, then restart the relay.');
+  }
+  if (!(await canAuthenticate(env, bridge))) throw new Error('The bridge key cannot authenticate to the relay; is it the relay owner?');
+  if (!(await canAuthenticate(env, reader))) {
+    await ensureRelayMember(env, bridge, reader.pubkey);
+    if (!(await canAuthenticate(env, reader))) throw new Error('Reader key still cannot authenticate after being added as a relay member');
+    console.log('Added the reader key as a relay member');
+  }
 }
 
-console.log(`Seed complete. Team ${teamName}; people ${people.map((p) => `@${p}`).join(', ')}; bot @${botUsername}; reader key is a relay member.`);
-console.log('Passwords and tokens are in .env.');
+console.log(
+  `Seed complete. Team ${teamName}; people ${people.map((p) => `@${p}`).join(', ')}; bot @${botUsername}; ${skipRelay ? 'relay skipped' : 'reader key is a relay member'}.`,
+);
+console.log(`Passwords and tokens are in ${envName}.`);

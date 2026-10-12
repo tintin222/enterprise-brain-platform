@@ -19,7 +19,8 @@ describe('admin API', () => {
     stack = new Stack();
     alice = await stack.login('alice');
     bridge = await stack.startBridge();
-    runtime = await stack.startRuntime();
+    // No periodic agent refresh during the test: the agent created through the API must answer at once.
+    runtime = await stack.startRuntime({ AGENT_REFRESH_SECONDS: '3600' });
     api = await startAdminApi({
       host: '127.0.0.1',
       port: 0,

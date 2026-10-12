@@ -31,7 +31,7 @@ Metrics worth alerting on:
 | `brain_ingestion_pending_threads` | Threads waiting to be indexed | growing |
 | `brain_ingestion_index_lag_seconds` | First change of a thread to its indexing | p95 above debounce + 15 s |
 
-Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4).
+Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4); with `ENV_FILE=.env.staging` and `--env-only` it checks staging's logs against staging's secrets (docs/staging.md).
 
 ## 2. Write throttling
 

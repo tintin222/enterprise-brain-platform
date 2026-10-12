@@ -48,6 +48,11 @@ describe('resolveEnv', () => {
     const { values } = resolveEnv(template, { EXTRA_SETTING: 'x' }, gens);
     expect(values.EXTRA_SETTING).toBe('x');
   });
+
+  it('derives the state database URL from STATE_DB_HOST when one is set (staging)', () => {
+    const { values } = resolveEnv(template, { STATE_DB_HOST: 'state-postgres.railway.internal', STATE_DB_PORT: '5432' }, gens);
+    expect(values.STATE_DATABASE_URL).toBe(`postgres://brain:${values.STATE_DB_PASSWORD}@state-postgres.railway.internal:5432/brain`);
+  });
 });
 
 describe('renderEnv', () => {

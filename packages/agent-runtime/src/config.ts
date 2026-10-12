@@ -10,6 +10,8 @@ export const runtimeConfigSchema = z.object({
   MAX_REPLIES_PER_THREAD: z.coerce.number().int().min(1).default(10),
   REPLY_WINDOW_SECONDS: z.coerce.number().int().min(1).default(3600),
   JOB_CONCURRENCY: z.coerce.number().int().min(1).default(4),
+  /** How often the agent list is re-read; a mention of an unknown key also re-reads it. */
+  AGENT_REFRESH_SECONDS: z.coerce.number().int().min(1).default(30),
   CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(1000).default(60_000),
   /** Required only for agents that use a model (not "echo"). */
   ANTHROPIC_API_KEY: z.string().optional(),
