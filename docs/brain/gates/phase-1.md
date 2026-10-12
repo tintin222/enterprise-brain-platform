@@ -51,7 +51,12 @@ Phase 0 suites still pass on the Phase 1 store (`brain-api` 9 tests, `capture` 2
 
 `pnpm brain:bench --chunks 250000 --queries 200` on the local state database, same data as the Phase 0 gate (5 000-word vocabulary with a heavy head, 60-word chunks, random unit vectors), after `brain.lexeme_stats` was refreshed.
 
-PENDING_BENCH
+| Query | Keyword | Semantic | Hybrid |
+| --- | --- | --- | --- |
+| Remembered words (three words of a stored chunk and its vector; 200 queries) | p50 88 ms, p95 278 ms, max 669 ms | p50 6 ms, p95 16 ms | **p50 83 ms, p95 267 ms**, max 623 ms |
+| Unrelated words (three random words, co-occurring nowhere; 50 queries: the fallback tiers) | **p50 256 ms, p95 722 ms**, max 846 ms | — | keyword-bound |
+
+Both are under the 1.5 s target. Two changes brought the fallback from p50 1.5 s / p95 7.7 s (measured first with the tiers alone) to this: the rare-terms tier shrinks the candidate set when a question has more than three words, and both fallback tiers now rank only the newest 4 000 matching chunks instead of every match (D66). The second change is what the bench's synthetic tail needed: every word of its vocabulary sits in about 6 % of the chunks, so three of them match some 40 000 chunks whatever their rarity; real text has rarer words, so the first change will do more work there. The price of the bound: when more than 4 000 chunks hold a question's rarest words, the oldest ones are not ranked for that question. The lexeme statistics (51 174 lexemes) were rebuilt by the job before measuring.
 
 For comparison, Phase 0 measured p95 215 ms for term searches and p95 6.5 s for the any-term fallback.
 
@@ -61,7 +66,7 @@ For comparison, Phase 0 measured p95 215 ms for term searches and p95 6.5 s for 
 
 ## 5. Staging
 
-PENDING_STAGING
+Deployed on 2026-10-13 at 01:25 local time with `pnpm staging:railway env app setup` (commit d62d9e6): the four services redeployed in 59 to 79 s each, every readiness check green on the first attempt; the brain API reports every Phase 1 feature on (`/features`: projects, people, systems, documents, tasks, reminders, ocrModel, and semantic search with the Google key); the setup registered `/project`, `/topic` and `/task` next to `/brain` in the team. The people sync was run once by hand so the directory holds the chat accounts before anyone signs in; the daily jobs take over from here (03:00 people, 07:00 stale projects, 08:00 reminders, 02:00 word statistics, every two minutes attachments, all Europe/Istanbul). Nothing of Phase 1 has been used by a person on staging yet: that is section 6.
 
 ## 6. The gate criteria, for the owner's people
 
