@@ -156,7 +156,7 @@ export const searchQuery = z.object({
 
 // --- people (FR-2) ---
 
-export const containerRole = z.enum(['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member']);
+export const containerRole = z.enum(['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member', 'contact']);
 const tags = z.array(z.string().trim().min(1).max(80)).max(50);
 export const profilePatchIn = z.object({
   role: z.string().trim().max(120).optional(),
@@ -177,6 +177,51 @@ export const externalContactIn = z.object({
 export const memberIn = z.object({ personId: id, role: containerRole.default('member') });
 export const memberOut = z.object({ person: entitySummaryOut, role: z.string(), linkId: z.number() });
 export const whoKnowsOut = z.object({ person: entitySummaryOut, score: z.number(), evidence: z.array(z.object({ entityId: z.string(), title: z.string(), type: z.string(), why: z.string(), url: z.string() })) });
+
+// --- projects and topics (FR-1) ---
+
+export const milestoneIn = z.object({ title: z.string().trim().min(1).max(200), date: z.iso.date(), kind: z.enum(['milestone', 'phase']).default('milestone'), done: z.boolean().optional() });
+export const projectIn = z.object({
+  title: z.string().trim().min(1).max(200),
+  client: z.string().trim().max(200).optional(),
+  goal: z.string().trim().max(5000).optional(),
+  scope: z.string().trim().max(5000).optional(),
+  stage: z.string().trim().max(60).optional(),
+  startsOn: z.iso.date().optional(),
+  endsOn: z.iso.date().optional(),
+  budget: z.string().trim().max(200).optional(),
+  stakeholderIds: z.array(id).max(50).optional(),
+  parentTopicId: id.optional(),
+  channels: z.boolean().optional(),
+  private: z.boolean().optional(),
+  linkChannelIds: z.array(mmId).max(20).optional(),
+});
+export const topicIn = z.object({
+  title: z.string().trim().min(1).max(200),
+  kind: z.enum(['internal', 'external']).default('internal'),
+  organisation: z.string().trim().max(200).optional(),
+  description: z.string().trim().max(5000).optional(),
+  ownerId: id.optional(),
+  contactIds: z.array(id).max(50).optional(),
+  systemIds: z.array(id).max(50).optional(),
+  channel: z.union([z.object({ mmChannelId: mmId }), z.object({ create: z.literal(true), name: z.string().trim().min(1).max(60).optional(), private: z.boolean().optional() })]),
+});
+export const homeOut = z.object({
+  container: containerOut,
+  owner: entitySummaryOut.nullable(),
+  channels: z.array(z.object({ mmChannelId: z.string(), role: z.string() })),
+  people: z.array(z.object({ person: entitySummaryOut, role: z.string() })),
+  systems: z.array(entitySummaryOut),
+  requirements: z.object({ open: z.number(), recent: z.array(entitySummaryOut) }),
+  tasks: z.object({ open: z.number(), recent: z.array(entitySummaryOut) }),
+  decisions: z.array(entitySummaryOut),
+  documents: z.array(entitySummaryOut),
+  conversations: z.array(entitySummaryOut),
+  milestones: z.array(milestoneIn),
+  package: z.object({ status: z.string(), note: z.string() }),
+  stale: z.boolean(),
+  spawnedFrom: containerOut.nullable(),
+});
 
 export const createAgentIn = z.object({
   handle: z.string().regex(/^[a-z][a-z0-9._-]{2,21}$/, '3-22 characters: lowercase letters, digits, ".", "-", "_"'),

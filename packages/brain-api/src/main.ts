@@ -5,7 +5,7 @@ import { BrainStore, DatabaseFileStore } from '@brain/brain';
 import { embeddingProviderFromConfig } from '@brain/models';
 import { BuzzRelayClient, chatApiUrl, createLogger, createPool, IDENTITY_MIGRATIONS_DIR, KeyStore, loadDotEnv, MattermostChatClient, migrate, parseConfig, signerFromHex } from '@brain/shared';
 import { AccessService } from './access.ts';
-import { buildApp } from './app.ts';
+import { buildApp, type BrainApiDeps } from './app.ts';
 import { brainApiConfigSchema } from './config.ts';
 import { startJobRunner } from './jobs.ts';
 import { PeopleService } from './people.ts';
@@ -40,7 +40,7 @@ const files = new DatabaseFileStore(pool);
 const jobs = startJobRunner({ pool, log, tickMs: 60_000 });
 const worker = embeddings ? startEmbeddingWorker({ store, embeddings, log, intervalMs: config.EMBED_INTERVAL_SECONDS * 1000, batchSize: config.EMBED_BATCH_SIZE }) : undefined;
 
-const app = await buildApp({
+const deps: BrainApiDeps = {
   config,
   pool,
   store,
@@ -59,9 +59,9 @@ const app = await buildApp({
   teamName: config.MM_TEAM_NAME,
   log,
   readiness: { mattermost: async () => (await chat.getMe()).id === botUserId },
-});
-
-registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId });
+};
+const app = await buildApp(deps);
+registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces });
 
 let stopping = false;
 const shutdown = (signal: string): void => {

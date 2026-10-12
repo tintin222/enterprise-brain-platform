@@ -386,6 +386,12 @@ export class BrainStore {
   }
 
   /** Name, visibility and active state of a relay channel, as ingestion keeps them (D36). */
+  /** Containers a person entity owns (the owner is always a member; plan section 4). */
+  async containersOwnedBy(personId: string): Promise<string[]> {
+    const r = await this.pool.query<{ id: string }>('SELECT id FROM brain.containers WHERE owner_id = $1', [personId]);
+    return r.rows.map((row) => row.id);
+  }
+
   async channelFacts(relayChannelId: string, db: Queryable = this.pool): Promise<{ name: string; visibility: 'open' | 'private'; active: boolean } | undefined> {
     const r = await db.query<{ name: string; visibility: 'open' | 'private'; active: boolean }>('SELECT name, visibility, active FROM brain.channels WHERE channel_id = $1', [relayChannelId]);
     return r.rows[0];

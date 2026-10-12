@@ -7,7 +7,7 @@ import { AccessError } from './access.ts';
 
 export const personKey = (mmUserId: string): string => `mm:${mmUserId}`;
 
-export const CONTAINER_ROLES = ['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member'] as const;
+export const CONTAINER_ROLES = ['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member', 'contact'] as const;
 export type ContainerRole = (typeof CONTAINER_ROLES)[number];
 
 /** Profile fields people and administrators edit (FR-2.1); Mattermost's own fields are refreshed by the sync. */

@@ -116,6 +116,38 @@ export interface PersonDetail {
   suggestions: { kind: string; value: string; by: string; at: string; reason?: string }[];
 }
 
+export interface Milestone {
+  title: string;
+  date: string;
+  kind: 'milestone' | 'phase';
+  done?: boolean;
+}
+
+export interface Home {
+  container: Container;
+  owner: EntitySummary | null;
+  channels: { mmChannelId: string; role: string }[];
+  people: { person: EntitySummary; role: string }[];
+  systems: EntitySummary[];
+  requirements: { open: number; recent: EntitySummary[] };
+  tasks: { open: number; recent: EntitySummary[] };
+  decisions: EntitySummary[];
+  documents: EntitySummary[];
+  conversations: EntitySummary[];
+  milestones: Milestone[];
+  package: { status: string; note: string };
+  stale: boolean;
+  spawnedFrom: Container | null;
+}
+
+export interface MyChannel {
+  id: string;
+  name: string;
+  display_name: string;
+  type: string;
+  containerId: string | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -162,6 +194,14 @@ export const brain = {
   links: (id: string) => api<{ outgoing: Link[]; incoming: Link[] }>(`/entities/${encodeURIComponent(id)}/links`),
   backlinks: (id: string) => api<{ links: Link[]; mentions: SearchResult[] }>(`/entities/${encodeURIComponent(id)}/backlinks`),
   search: (params: Record<string, string>) => api<{ results: SearchResult[]; semantic: boolean; tookMs: number }>(`/search?${new URLSearchParams(params)}`),
+  // Projects and Topics (FR-1)
+  home: (id: string) => api<Home>(`/containers/${encodeURIComponent(id)}/home`),
+  createProject: (body: Record<string, unknown>) => api<{ container: Container; channels: { id: string; name: string }[] }>('/projects', { method: 'POST', body: JSON.stringify(body) }),
+  spawnProject: (topicId: string, body: Record<string, unknown>) => api<{ container: Container; channels: { id: string; name: string }[] }>(`/projects/from-topic/${encodeURIComponent(topicId)}`, { method: 'POST', body: JSON.stringify(body) }),
+  createTopic: (body: Record<string, unknown>) => api<{ container: Container; channel: { id: string; name: string } }>('/topics', { method: 'POST', body: JSON.stringify(body) }),
+  moveItems: (topicId: string, body: { projectId: string; entityIds: string[]; mode: 'move' | 'link' }) => api<{ moved: string[]; linked: string[]; skipped: string[] }>(`/topics/${encodeURIComponent(topicId)}/move-items`, { method: 'POST', body: JSON.stringify(body) }),
+  setTimeline: (id: string, milestones: Milestone[]) => api<{ container: Container }>(`/containers/${encodeURIComponent(id)}/timeline`, { method: 'PATCH', body: JSON.stringify({ milestones }) }),
+  myChannels: () => api<{ channels: MyChannel[] }>('/me/channels'),
   // People (FR-2)
   people: (params: Record<string, string> = {}) => api<{ people: EntitySummary[] }>(`/people?${new URLSearchParams(params)}`),
   person: (id: string) => api<PersonDetail>(`/people/${encodeURIComponent(id)}`),

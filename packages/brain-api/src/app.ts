@@ -21,6 +21,8 @@ import type { PeopleService } from './people.ts';
 import { registerBrainRoutes } from './routes-brain.ts';
 import { registerMattermostRoutes } from './routes-mm.ts';
 import { registerPeopleRoutes } from './routes-people.ts';
+import { registerWorkspaceRoutes } from './routes-workspaces.ts';
+import { WorkspaceService } from './workspaces.ts';
 import type { TokenSigner } from './sessions.ts';
 
 export interface BrainApiDeps {
@@ -42,6 +44,8 @@ export interface BrainApiDeps {
   people: PeopleService;
   files: FileStore;
   jobs: JobRunner;
+  /** Set by buildApp: the Project and Topic service, for the jobs registered after the app is built. */
+  workspaces?: WorkspaceService;
   botUserId: string;
   teamName: string;
   log: Logger;
@@ -106,12 +110,15 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
 
   registerAuth(app, deps);
   const linker = new ChannelLinker({ store: deps.store, chat: deps.chat, access: deps.access, botUserId: deps.botUserId, publicUrl: config.BRAIN_PUBLIC_URL, log });
+  const workspaces = new WorkspaceService({ store: deps.store, chat: deps.chat, adminChat: deps.adminChat, access: deps.access, people: deps.people, linker, botUserId: deps.botUserId, teamName: deps.teamName, publicUrl: config.BRAIN_PUBLIC_URL, staleDays: config.BRAIN_STALE_DAYS, log });
+  deps.workspaces = workspaces;
   await app.register((api, _options, done) => {
     registerBrainRoutes(api, deps, linker);
     registerPeopleRoutes(api, deps);
+    registerWorkspaceRoutes(api, deps, workspaces);
     done();
   }, { prefix: API_PREFIX });
-  registerMattermostRoutes(app, deps, linker);
+  registerMattermostRoutes(app, deps, linker, workspaces);
 
   // Operations endpoints, as the other services have them (docs/operations.md section 1).
   app.get('/healthz', { schema: { hide: true } }, () => ({ ok: true }));

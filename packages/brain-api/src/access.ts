@@ -56,7 +56,10 @@ export class AccessService {
     const containerIds = new Set([GENERAL_CONTAINER_ID, ...(await this.#store.containersOfChannels(mmChannelIds))]);
     // Roles in a container (FR-2.3) make the person a member of it even without one of its channels.
     const person = this.#people ? await this.#people.ensurePerson(userId, user) : undefined;
-    if (person) for (const containerId of await this.#people!.containersOf(person.id)) containerIds.add(containerId);
+    if (person) {
+      for (const containerId of await this.#people!.containersOf(person.id)) containerIds.add(containerId);
+      for (const containerId of await this.#store.containersOwnedBy(person.id)) containerIds.add(containerId);
+    }
     const value: Membership = { mmChannelIds, relayChannelIds: mmChannelIds.map(relayChannelIdFor), containerIds: [...containerIds], isAdmin, username: user.username, ...(person ? { personId: person.id } : {}) };
     this.#cache.set(userId, { at: Date.now(), value });
     return value;

@@ -11,6 +11,14 @@ export const secretCommandToken = (teamId: string, trigger: string): string => `
 
 export const COMMAND_TRIGGER = 'brain';
 
+/** The slash commands the brain registers (spec section 9: /project, /topic, /task; /brain for search and links). */
+export const COMMANDS: { trigger: string; displayName: string; description: string; hint: string }[] = [
+  { trigger: 'brain', displayName: 'Enterprise Brain', description: 'Search the brain, or link this channel to a project or topic', hint: 'search <words> | link | help' },
+  { trigger: 'project', displayName: 'Project', description: 'Create a project with its channels, or archive one', hint: 'new [--from-topic] | archive | help' },
+  { trigger: 'topic', displayName: 'Topic', description: 'Make this channel a topic, or start a new topic channel', hint: 'here | new | help' },
+];
+export const COMMAND_TRIGGERS = COMMANDS.map((command) => command.trigger);
+
 export interface MattermostSetupDeps {
   /** A client acting as a system admin user (D25). */
   adminChat: ChatClient;
@@ -60,40 +68,32 @@ export async function ensureMattermostIntegration(deps: MattermostSetupDeps): Pr
     log.info({ clientId, callback }, existing ? 'OAuth app recreated for the new callback address' : 'OAuth app created');
   }
 
-  // 3. The /brain slash command in every team the admin belongs to (spike B1).
-  const url = `${deps.internalUrl.replace(/\/$/, '')}/mm/commands/${COMMAND_TRIGGER}`;
+  // 3. The slash commands in every team the admin belongs to (spike B1): /brain, and the Phase 1 commands.
   const commands: MattermostSetupResult['commands'] = [];
   for (const team of await adminChat.getMyTeams()) {
-    const wanted = {
-      team_id: team.id,
-      trigger: COMMAND_TRIGGER,
-      method: 'P' as const,
-      url,
-      auto_complete: true,
-      auto_complete_desc: 'Search the brain, or link this channel to a project or topic',
-      auto_complete_hint: 'search <words> | link | help',
-      display_name: 'Enterprise Brain',
-      description: 'The company brain',
-      username: 'brain',
-    };
-    const current = (await adminChat.listCommands(team.id)).find((command) => command.trigger === COMMAND_TRIGGER && !command.delete_at);
-    let command = current;
-    let created = false;
-    if (!current) {
-      command = await adminChat.createCommand(wanted);
-      created = true;
-    } else if (current.url !== url || current.auto_complete_hint !== wanted.auto_complete_hint || current.display_name !== wanted.display_name) {
-      command = await adminChat.updateCommand(current.id, wanted);
+    const existing = await adminChat.listCommands(team.id);
+    for (const spec of COMMANDS) {
+      const url = `${deps.internalUrl.replace(/\/$/, '')}/mm/commands/${spec.trigger}`;
+      const wanted = { team_id: team.id, trigger: spec.trigger, method: 'P' as const, url, auto_complete: true, auto_complete_desc: spec.description, auto_complete_hint: spec.hint, display_name: spec.displayName, description: spec.description, username: 'brain' };
+      const current = existing.find((command) => command.trigger === spec.trigger && !command.delete_at);
+      let command = current;
+      let created = false;
+      if (!current) {
+        command = await adminChat.createCommand(wanted);
+        created = true;
+      } else if (current.url !== url || current.auto_complete_hint !== wanted.auto_complete_hint || current.display_name !== wanted.display_name || current.auto_complete_desc !== wanted.auto_complete_desc) {
+        command = await adminChat.updateCommand(current.id, wanted);
+      }
+      if (!command) continue;
+      const ref = secretCommandToken(team.id, spec.trigger);
+      const stored = await keyStore.getSecretText(ref);
+      if (stored !== command.token) {
+        if (stored === undefined) await keyStore.putSecret(ref, 'command-token', command.token);
+        else await keyStore.replaceSecret(ref, command.token);
+      }
+      commands.push({ teamId: team.id, commandId: command.id, created });
+      if (created) log.info({ teamId: team.id, commandId: command.id, trigger: spec.trigger }, `Registered the /${spec.trigger} command`);
     }
-    if (!command) continue;
-    const ref = secretCommandToken(team.id, COMMAND_TRIGGER);
-    const stored = await keyStore.getSecretText(ref);
-    if (stored !== command.token) {
-      if (stored === undefined) await keyStore.putSecret(ref, 'command-token', command.token);
-      else await keyStore.replaceSecret(ref, command.token);
-    }
-    commands.push({ teamId: team.id, commandId: command.id, created });
-    if (created) log.info({ teamId: team.id, commandId: command.id }, 'Registered the /brain command');
   }
   await store.setSetting(SETTING_COMMANDS, commands.map(({ teamId, commandId }) => ({ teamId, commandId })));
   return { allowedHost, oauthClientId: clientId ?? '', commands };

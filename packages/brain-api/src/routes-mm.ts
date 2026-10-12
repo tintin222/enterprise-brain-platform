@@ -1,8 +1,8 @@
-// Mattermost's callbacks (spike B1, plan section 10): the /brain slash command, dialog submissions and post
-// actions. Mattermost is authenticated by the command token it was issued; dialogs and buttons carry a state
-// we signed. The brain then acts as the invoking person, never as the integration.
+// Mattermost's callbacks (spike B1, plan section 10): the /brain, /project and /topic slash commands, dialog
+// submissions and post actions. Mattermost is authenticated by the command token it was issued; dialogs and
+// buttons carry a state we signed. The brain then acts as the invoking person, never as the integration.
 import type { Container } from '@brain/brain';
-import { nowSeconds, type MmDialog } from '@brain/shared';
+import { nowSeconds, type MmDialog, type MmDialogElement } from '@brain/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -10,24 +10,33 @@ import type { Principal } from './access.ts';
 import type { BrainApiDeps } from './app.ts';
 import { safeEqual } from './auth.ts';
 import type { ChannelLinker } from './channels.ts';
-import { COMMAND_TRIGGER, secretCommandToken } from './mattermost-setup.ts';
+import { COMMAND_TRIGGERS, secretCommandToken } from './mattermost-setup.ts';
 import { containerUrl } from './present.ts';
 import { actionBody, commandBody, dialogBody } from './schemas.ts';
+import type { WorkspaceService } from './workspaces.ts';
 
 const STATE_SECONDS = 600;
 const SEARCH_RESULTS = 5;
+const DIALOGS = ['link', 'project', 'topic'] as const;
 
 interface CommandResponse {
   response_type?: 'ephemeral' | 'in_channel';
   text?: string;
 }
 
-export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDeps, linker: ChannelLinker): void {
+type CommandBody = z.infer<typeof commandBody>;
+type Submission = Record<string, string | boolean | number | null>;
+
+const str = (submission: Submission, key: string): string => (typeof submission[key] === 'string' ? submission[key].trim() : '');
+const bool = (submission: Submission, key: string): boolean => submission[key] === true || submission[key] === 'true';
+
+export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDeps, linker: ChannelLinker, workspaces: WorkspaceService): void {
   const api = app.withTypeProvider<ZodTypeProvider>();
   const { config, store, access, keyStore, tokens, chat, log } = deps;
   const publicUrl = config.BRAIN_PUBLIC_URL.replace(/\/$/, '');
   const internalUrl = config.BRAIN_INTERNAL_URL.replace(/\/$/, '');
   const ephemeral = (text: string): CommandResponse => ({ response_type: 'ephemeral', text });
+  const chatCtx = (principal: Principal, requestId: string, ref?: string) => ({ actor: { kind: 'person' as const, id: principal.userId }, source: { kind: 'chat' as const, ...(ref ? { ref } : {}) }, requestId });
 
   async function personFor(userId: string): Promise<Principal> {
     const membership = await access.membership(userId);
@@ -36,13 +45,26 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
 
   const help = [
     '**Enterprise Brain**',
-    `- \`/${COMMAND_TRIGGER} search <words>\`: search everything you may see.`,
-    `- \`/${COMMAND_TRIGGER} link\`: make this channel feed a Project or Topic (its threads become that container's conversations).`,
+    '- `/brain search <words>`: search everything you may see.',
+    '- `/brain link`: make this channel feed a Project or Topic (its threads become that container\'s conversations).',
+    '- `/project new [title]`: create a project with its three channels; `/project new --from-topic` spawns it from a topic.',
+    '- `/project archive`: archive the project this channel belongs to.',
+    '- `/topic here`: make this channel a topic; `/topic new`: start a new topic channel.',
     `- Pages: ${publicUrl}`,
   ].join('\n');
 
+  const state = (body: CommandBody, purpose: string, extra: Record<string, unknown> = {}): string => tokens.sign({ uid: body.user_id, exp: nowSeconds() + STATE_SECONDS, use: 'state', data: { purpose, channel: body.channel_id, team: body.team_id, ...extra } });
+
+  async function openDialog(body: CommandBody, name: (typeof DIALOGS)[number], dialog: Omit<MmDialog, 'callback_id' | 'state'>, extra: Record<string, unknown> = {}): Promise<CommandResponse> {
+    if (!body.trigger_id) return ephemeral('This command needs a Mattermost that sends trigger ids.');
+    await chat.openDialog({ trigger_id: body.trigger_id, url: `${internalUrl}/mm/dialogs/${name}`, dialog: { ...dialog, callback_id: name, notify_on_cancel: false, state: state(body, name, extra) } });
+    return {};
+  }
+
+  // --- /brain ---
+
   async function searchCommand(principal: Principal, text: string, requestId: string): Promise<CommandResponse> {
-    if (!text) return ephemeral(`What should I search for? \`/${COMMAND_TRIGGER} search <words>\``);
+    if (!text) return ephemeral('What should I search for? `/brain search <words>`');
     const scope = await access.scope(principal);
     let embedding: number[] | undefined;
     if (deps.embeddings) {
@@ -53,7 +75,7 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
       }
     }
     const results = await store.search({ query: text, embedding, ...(deps.embeddings ? { maxDistance: deps.embeddings.relevanceDistance } : {}), scope, limit: SEARCH_RESULTS });
-    await store.audit({ action: 'search', details: { via: 'chat', results: results.length, semantic: embedding !== undefined } }, { actor: { kind: 'person', id: principal.userId }, source: { kind: 'chat' }, requestId });
+    await store.audit({ action: 'search', details: { via: 'chat', results: results.length, semantic: embedding !== undefined } }, chatCtx(principal, requestId));
     const more = `${publicUrl}/search?q=${encodeURIComponent(text)}`;
     if (results.length === 0) return ephemeral(`Nothing found for "${text}". [Search the pages](${more})`);
     const lines = results.map((result) => {
@@ -64,76 +86,162 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
     return ephemeral(`Results for "${text}":\n${lines.join('\n')}\n[All results](${more})`);
   }
 
-  async function linkCommand(principal: Principal, body: z.infer<typeof commandBody>): Promise<CommandResponse> {
-    if (!body.trigger_id) return ephemeral('This command needs a Mattermost that sends trigger ids.');
+  async function linkCommand(body: CommandBody): Promise<CommandResponse> {
     const containers = (await store.listContainers({ status: 'active', limit: 100 })).filter((container) => container.kind !== 'general');
-    if (containers.length === 0) return ephemeral(`There are no Projects or Topics yet. Create one on the pages: ${publicUrl}/containers`);
+    if (containers.length === 0) return ephemeral(`There are no Projects or Topics yet. Create one with \`/project new\` or \`/topic here\`, or on the pages: ${publicUrl}/containers`);
     const existing = await store.channelLinkByMm(body.channel_id);
-    const dialog: MmDialog = {
-      callback_id: 'link',
+    return openDialog(body, 'link', {
       title: 'Link this channel',
-      introduction_text: existing ? `This channel feeds **${(await store.getContainer(existing.containerId))?.title ?? existing.containerId}** now. Choose where its threads should go.` : 'Choose the Project or Topic this channel feeds. Its threads become that container\'s conversations.',
+      introduction_text: existing ? `This channel feeds **${(await store.getContainer(existing.containerId))?.title ?? existing.containerId}** now. Choose where its threads should go.` : "Choose the Project or Topic this channel feeds. Its threads become that container's conversations.",
       elements: [
         { display_name: 'Project or Topic', name: 'container', type: 'select', options: containers.map((container) => ({ text: `${container.title} (${container.kind})`, value: container.id })), ...(existing ? { default: existing.containerId } : {}) },
         { display_name: 'Role of this channel', name: 'role', type: 'select', default: 'linked', options: [{ text: 'Linked channel', value: 'linked' }, { text: 'Home channel', value: 'home' }, { text: 'Requirements channel', value: 'requirements' }] },
       ],
       submit_label: 'Link',
-      notify_on_cancel: false,
-      state: tokens.sign({ uid: body.user_id, exp: nowSeconds() + STATE_SECONDS, use: 'state', data: { purpose: 'link', channel: body.channel_id, team: body.team_id } }),
-    };
-    await chat.openDialog({ trigger_id: body.trigger_id, url: `${internalUrl}/mm/dialogs/link`, dialog });
-    return {};
+    });
   }
 
-  api.post(`/mm/commands/${COMMAND_TRIGGER}`, { schema: { tags: ['Mattermost'], summary: `The /${COMMAND_TRIGGER} slash command (form body from Mattermost)`, body: commandBody, hide: false } }, async (request, reply) => {
+  // --- /project ---
+
+  const STAGES = ['discovery', 'analysis', 'build', 'rollout', 'live', 'closed'];
+
+  async function projectNewCommand(body: CommandBody, argument: string): Promise<CommandResponse> {
+    const fromTopic = /--from-topic/.test(argument);
+    const title = argument.replace(/--from-topic/g, '').trim();
+    const topics = fromTopic ? (await store.listContainers({ kind: 'topic', status: 'active', limit: 100 })) : [];
+    if (fromTopic && topics.length === 0) return ephemeral('There are no Topics to spawn from yet. `/topic here` makes this channel one.');
+    const elements: MmDialogElement[] = [
+      { display_name: 'Name', name: 'title', type: 'text', default: title, max_length: 200, placeholder: 'Warehouse migration' },
+      ...(fromTopic ? [{ display_name: 'From topic', name: 'topic', type: 'select' as const, options: topics.map((topic) => ({ text: topic.title, value: topic.id })) }] : []),
+      { display_name: 'Client', name: 'client', type: 'text', optional: true, max_length: 200 },
+      { display_name: 'Goal', name: 'goal', type: 'textarea', optional: true, max_length: 2000, help_text: 'What done looks like.' },
+      { display_name: 'Stage', name: 'stage', type: 'select', default: 'discovery', options: STAGES.map((stage) => ({ text: stage, value: stage })) },
+      { display_name: 'Private channels', name: 'private', type: 'bool', optional: true, help_text: 'The three project channels are private (invite only).' },
+    ];
+    return openDialog(body, 'project', { title: fromTopic ? 'New project from a topic' : 'New project', introduction_text: 'Creates the project and its channels: #proj-<name>, -requirements and -agent.', elements, submit_label: 'Create' });
+  }
+
+  async function projectArchiveCommand(principal: Principal, body: CommandBody, requestId: string): Promise<CommandResponse> {
+    const link = await store.channelLinkByMm(body.channel_id);
+    const container = link ? await store.getContainer(link.containerId) : undefined;
+    if (!container || container.kind !== 'project') return ephemeral('This channel does not belong to a project.');
+    if (principal.kind === 'person' && !principal.isAdmin && container.ownerId !== principal.personId) return ephemeral(`Only the project's owner or an administrator can archive **${container.title}**.`);
+    await store.updateContainer(container.id, { status: 'archived' }, chatCtx(principal, requestId, body.channel_id));
+    return ephemeral(`Archived **${container.title}**. It stays searchable. ${containerUrl({ publicUrl }, container.id)}`);
+  }
+
+  // --- /topic ---
+
+  async function topicHereCommand(body: CommandBody): Promise<CommandResponse> {
+    const channel = await chat.getChannel(body.channel_id);
+    if (!channel || (channel.type !== 'O' && channel.type !== 'P')) return ephemeral('Only an open or private channel can become a topic.');
+    const existing = await store.channelLinkByMm(body.channel_id);
+    if (existing) {
+      const container = await store.getContainer(existing.containerId);
+      return ephemeral(`This channel already feeds **${container?.title ?? existing.containerId}** (${container?.kind ?? 'container'}). ${containerUrl({ publicUrl }, existing.containerId)}`);
+    }
+    return openDialog(body, 'topic', { title: 'Make this channel a topic', introduction_text: `#${channel.name} becomes the topic's home: its threads are the topic's conversations.`, elements: topicElements(channel.display_name, false), submit_label: 'Create topic' }, { mode: 'here' });
+  }
+
+  function topicElements(defaultTitle: string, withChannel: boolean): MmDialogElement[] {
+    return [
+      { display_name: 'Name', name: 'title', type: 'text', default: defaultTitle, max_length: 200 },
+      ...(withChannel ? [{ display_name: 'Channel name', name: 'channelName', type: 'text' as const, optional: true, max_length: 60, help_text: 'Lowercase, dashes; empty uses the topic name.' }, { display_name: 'Private channel', name: 'private', type: 'bool' as const, optional: true }] : []),
+      { display_name: 'Kind', name: 'kind', type: 'select', default: 'internal', options: [{ text: 'Internal', value: 'internal' }, { text: 'External (a client, a vendor)', value: 'external' }] },
+      { display_name: 'Organisation', name: 'organisation', type: 'text', optional: true, max_length: 200, help_text: 'For external topics: the other organisation.' },
+      { display_name: 'Description', name: 'description', type: 'textarea', optional: true, max_length: 2000 },
+    ];
+  }
+
+  function topicNewCommand(body: CommandBody, argument: string): Promise<CommandResponse> {
+    return openDialog(body, 'topic', { title: 'New topic', introduction_text: 'Creates the topic and a channel for it.', elements: topicElements(argument, true), submit_label: 'Create topic' }, { mode: 'new' });
+  }
+
+  // --- the command endpoint ---
+
+  api.post('/mm/commands/:trigger', { schema: { tags: ['Mattermost'], summary: 'A slash command (/brain, /project, /topic; form body from Mattermost)', params: z.object({ trigger: z.enum(COMMAND_TRIGGERS as [string, ...string[]]) }), body: commandBody, hide: false } }, async (request, reply) => {
     const body = request.body;
-    const expected = await keyStore.getSecretText(secretCommandToken(body.team_id, COMMAND_TRIGGER));
+    const trigger = request.params.trigger;
+    const expected = await keyStore.getSecretText(secretCommandToken(body.team_id, trigger));
     if (!expected || !safeEqual(body.token, expected)) return reply.code(401).send({ error: 'Unknown command token', code: 'unauthorized' });
     if (!config.BRAIN_FEATURE_CHAT_COMMANDS) return ephemeral('The brain chat commands are switched off on this installation.');
     const principal = await personFor(body.user_id);
     const [sub = '', ...rest] = body.text.trim().split(/\s+/);
     const argument = rest.join(' ').trim();
     try {
-      switch (sub.toLowerCase()) {
-        case 'search':
-        case 's':
-          return await searchCommand(principal, argument, request.id);
-        case 'link':
-          return await linkCommand(principal, body);
-        default:
-          return ephemeral(help);
+      if (trigger === 'brain') {
+        if (sub === 'search' || sub === 's') return await searchCommand(principal, argument, request.id);
+        if (sub === 'link') return await linkCommand(body);
+        return ephemeral(help);
       }
+      if (!config.BRAIN_FEATURE_PROJECTS) return ephemeral('Projects and Topics are switched off on this installation.');
+      if (trigger === 'project') {
+        if (sub === 'new') return await projectNewCommand(body, argument);
+        if (sub === 'archive') return await projectArchiveCommand(principal, body, request.id);
+        return ephemeral(help);
+      }
+      if (trigger === 'topic') {
+        if (sub === 'here') return await topicHereCommand(body);
+        if (sub === 'new') return await topicNewCommand(body, argument);
+        return ephemeral(help);
+      }
+      return ephemeral(help);
     } catch (error) {
-      log.warn({ requestId: request.id, sub, err: error instanceof Error ? error.message : String(error) }, 'Slash command failed');
+      log.warn({ requestId: request.id, trigger, sub, err: error instanceof Error ? error.message : String(error) }, 'Slash command failed');
       return ephemeral(`Sorry, that did not work: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
-  api.post('/mm/dialogs/:name', { schema: { tags: ['Mattermost'], summary: 'A dialog submission (JSON from Mattermost)', params: z.object({ name: z.enum(['link']) }), body: dialogBody } }, async (request, reply) => {
+  // --- dialogs ---
+
+  api.post('/mm/dialogs/:name', { schema: { tags: ['Mattermost'], summary: 'A dialog submission (JSON from Mattermost)', params: z.object({ name: z.enum(DIALOGS) }), body: dialogBody } }, async (request, reply) => {
     const body = request.body;
-    const state = tokens.verify(body.state, 'state');
-    if (!state || state.uid !== body.user_id || state.data?.purpose !== request.params.name || state.data.channel !== body.channel_id) return reply.code(401).send({ error: 'Unknown or expired dialog', code: 'unauthorized' });
+    const verified = tokens.verify(body.state, 'state');
+    if (!verified || verified.uid !== body.user_id || verified.data?.purpose !== request.params.name || verified.data.channel !== body.channel_id) return reply.code(401).send({ error: 'Unknown or expired dialog', code: 'unauthorized' });
     if (body.cancelled) return {};
     const principal = await personFor(body.user_id);
-    const containerId = String(body.submission.container ?? '');
-    const role = String(body.submission.role ?? 'linked');
-    const container = await store.getContainer(containerId);
-    if (!container || container.kind === 'general') return { errors: { container: 'Choose a Project or Topic' } };
-    if (role !== 'linked' && role !== 'home' && role !== 'requirements') return { errors: { role: 'Choose a role' } };
+    const submission = body.submission;
+    const ctx = chatCtx(principal, request.id, body.channel_id);
     try {
-      await linker.attach(container, body.channel_id, role, principal, { actor: { kind: 'person', id: principal.userId }, source: { kind: 'chat' }, requestId: request.id });
+      switch (request.params.name) {
+        case 'link': {
+          const containerId = str(submission, 'container');
+          const role = str(submission, 'role') || 'linked';
+          const container = await store.getContainer(containerId);
+          if (!container || container.kind === 'general') return { errors: { container: 'Choose a Project or Topic' } };
+          if (role !== 'linked' && role !== 'home' && role !== 'requirements') return { errors: { role: 'Choose a role' } };
+          await linker.attach(container, body.channel_id, role, principal, ctx);
+          await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Linked: this channel now feeds **${container.title}**. ${containerUrl({ publicUrl }, container.id)}` }).catch(() => undefined);
+          return {};
+        }
+        case 'project': {
+          const title = str(submission, 'title');
+          if (!title) return { errors: { title: 'Give the project a name' } };
+          const topicId = str(submission, 'topic') || undefined;
+          const { container, channels } = await workspaces.createProject({ title, client: str(submission, 'client'), goal: str(submission, 'goal'), stage: str(submission, 'stage') || 'discovery', private: bool(submission, 'private'), ...(topicId ? { parentTopicId: topicId } : {}) }, principal, ctx);
+          await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Created the project **${container.title}** with ${channels.map((channel) => `~${channel.name}`).join(', ')}. ${containerUrl({ publicUrl }, container.id)}` }).catch(() => undefined);
+          return {};
+        }
+        case 'topic': {
+          const title = str(submission, 'title');
+          if (!title) return { errors: { title: 'Give the topic a name' } };
+          const kind = str(submission, 'kind') === 'external' ? 'external' : 'internal';
+          const channelSpec = verified.data.mode === 'new' ? { create: true as const, ...(str(submission, 'channelName') ? { name: str(submission, 'channelName') } : {}), private: bool(submission, 'private') } : { mmChannelId: body.channel_id };
+          const { container, channel } = await workspaces.createTopic({ title, kind, organisation: str(submission, 'organisation'), description: str(submission, 'description'), channel: channelSpec }, principal, ctx);
+          await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Created the topic **${container.title}**; its home is ~${channel.name}. ${containerUrl({ publicUrl }, container.id)}` }).catch(() => undefined);
+          return {};
+        }
+      }
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
-    await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Linked: this channel now feeds **${container.title}**. ${containerUrl({ publicUrl }, container.id)}` }).catch(() => undefined);
-    return {};
   });
 
   api.post('/mm/actions/:name', { schema: { tags: ['Mattermost'], summary: 'A button on a post (JSON from Mattermost); the context carries a signed state', params: z.object({ name: z.string().min(1) }), body: actionBody } }, async (request, reply) => {
     const body = request.body;
-    const state = tokens.verify(typeof body.context.state === 'string' ? body.context.state : undefined, 'state');
-    if (!state || state.data?.purpose !== request.params.name) return reply.code(401).send({ error: 'Unknown or expired action', code: 'unauthorized' });
-    // Phase 2 brings proposals (accept, edit, dismiss); Phase 0 only proves the path.
+    const verified = tokens.verify(typeof body.context.state === 'string' ? body.context.state : undefined, 'state');
+    if (!verified || verified.data?.purpose !== request.params.name) return reply.code(401).send({ error: 'Unknown or expired action', code: 'unauthorized' });
+    // Tasks (Phase 1 T1.6) and proposals (Phase 2) answer here.
     return { ephemeral_text: `Nothing to do for "${request.params.name}" yet.` };
   });
 

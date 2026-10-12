@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
 import { BrainStore, DatabaseFileStore, PostgresBrainClient } from '@brain/brain';
-import { AccessService, brainApiConfigSchema, buildApp, PeopleService, registerPhase1Jobs, startEmbeddingWorker, startJobRunner, TokenSigner, type BrainApiConfig, type EmbeddingWorker, type JobRunner } from '@brain/brain-api';
+import { AccessService, brainApiConfigSchema, buildApp, PeopleService, registerPhase1Jobs, startEmbeddingWorker, startJobRunner, TokenSigner, type BrainApiConfig, type BrainApiDeps, type EmbeddingWorker, type JobRunner } from '@brain/brain-api';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
 import { embeddingProviderFromConfig } from '@brain/models';
 import { Ingestion, ingestionConfigSchema } from '@brain/ingestion';
@@ -293,8 +293,9 @@ export class Stack {
     const files = new DatabaseFileStore(this.pool);
     // Jobs run only when a test ticks them (`jobs.tick(now)`), never on a timer.
     const jobs = startJobRunner({ pool: this.pool, log, tickMs: 60_000, enabled: false });
-    const app = await buildApp({ config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, people, files, jobs, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log });
-    registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId });
+    const deps: BrainApiDeps = { config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, people, files, jobs, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log };
+    const app = await buildApp(deps);
+    registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces });
     const worker = embeddings ? startEmbeddingWorker({ store, embeddings, log, intervalMs: 500, batchSize: 64 }) : undefined;
     await app.listen({ host: '0.0.0.0', port });
     return {

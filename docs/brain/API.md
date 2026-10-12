@@ -18,6 +18,8 @@ Errors are `{ "error": "<message>", "code": "<code>" }`; validation errors add `
 - [Setup](#setup)
 - [Mattermost](#mattermost)
 - [People](#people)
+- [Projects](#projects)
+- [Topics](#topics)
 
 ## Session
 
@@ -49,6 +51,16 @@ Response 401:
 Feature flags (no sign-in needed)
 
 Response 200: Default Response
+
+### `GET /api/v1/brain/me/channels`
+
+The caller's open and private channels (for the forms that link or promote a channel)
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `channels` | array of object | yes |
 
 ## Containers
 
@@ -207,6 +219,60 @@ Response 200:
 | Field | Type | Required |
 | --- | --- | --- |
 | `removed` | boolean | yes |
+
+### `GET /api/v1/brain/containers/{id}/home`
+
+A Project's or Topic's home: summary, people, systems, requirements, tasks, decisions, documents, conversations, timeline (FR-1.3, FR-1.8)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `container` | object | yes |
+| `owner` | object \| null | yes |
+| `channels` | array of object | yes |
+| `people` | array of object | yes |
+| `systems` | array of object | yes |
+| `requirements` | object | yes |
+| `tasks` | object | yes |
+| `decisions` | array of object | yes |
+| `documents` | array of object | yes |
+| `conversations` | array of object | yes |
+| `milestones` | array of object | yes |
+| `package` | object | yes |
+| `stale` | boolean | yes |
+| `spawnedFrom` | object \| null | yes |
+
+Response 404:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | string | yes |
+| `code` | string | no |
+
+### `PATCH /api/v1/brain/containers/{id}/timeline`
+
+Replace a Project's milestones and phases (FR-1.4; members)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `milestones` | array of object | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `container` | object | yes |
 
 ## Entities
 
@@ -606,9 +672,13 @@ Response 200:
 
 Callbacks Mattermost makes for slash commands, dialogs and buttons
 
-### `POST /mm/commands/brain`
+### `POST /mm/commands/{trigger}`
 
-The /brain slash command (form body from Mattermost)
+A slash command (/brain, /project, /topic; form body from Mattermost)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `trigger` | path | `brain` \| `project` \| `topic` | yes |
 
 Body:
 
@@ -634,7 +704,7 @@ A dialog submission (JSON from Mattermost)
 
 | Parameter | In | Type | Required |
 | --- | --- | --- | --- |
-| `name` | path | `link` | yes |
+| `name` | path | `link` \| `project` \| `topic` | yes |
 
 Body:
 
@@ -835,7 +905,7 @@ Body:
 | Field | Type | Required |
 | --- | --- | --- |
 | `personId` | string | yes |
-| `role` | `sponsor` \| `product_owner` \| `end_user` \| `developer` \| `fde` \| `reviewer` \| `member` | no |
+| `role` | `sponsor` \| `product_owner` \| `end_user` \| `developer` \| `fde` \| `reviewer` \| `member` \| `contact` | no |
 
 Response 201:
 
@@ -857,3 +927,116 @@ Response 200:
 | Field | Type | Required |
 | --- | --- | --- |
 | `removed` | boolean | yes |
+
+## Projects
+
+### `POST /api/v1/brain/projects`
+
+Create a Project with its channel group (FR-1.1, FR-1.2)
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | yes |
+| `client` | string | no |
+| `goal` | string | no |
+| `scope` | string | no |
+| `stage` | string | no |
+| `startsOn` | string | no |
+| `endsOn` | string | no |
+| `budget` | string | no |
+| `stakeholderIds` | array of string | no |
+| `parentTopicId` | string | no |
+| `channels` | boolean | no |
+| `private` | boolean | no |
+| `linkChannelIds` | array of string | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `container` | object | yes |
+| `channels` | array of object | yes |
+
+### `POST /api/v1/brain/projects/from-topic/{topicId}`
+
+Spawn a Project from a Topic: its people and systems come along (FR-1.9)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `topicId` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | yes |
+| `client` | string | no |
+| `goal` | string | no |
+| `scope` | string | no |
+| `stage` | string | no |
+| `startsOn` | string | no |
+| `endsOn` | string | no |
+| `budget` | string | no |
+| `stakeholderIds` | array of string | no |
+| `channels` | boolean | no |
+| `private` | boolean | no |
+| `linkChannelIds` | array of string | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `container` | object | yes |
+| `channels` | array of object | yes |
+
+## Topics
+
+### `POST /api/v1/brain/topics`
+
+Create a Topic from an existing channel or with a new one (FR-1.7)
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | yes |
+| `kind` | `internal` \| `external` | no |
+| `organisation` | string | no |
+| `description` | string | no |
+| `ownerId` | string | no |
+| `contactIds` | array of string | no |
+| `systemIds` | array of string | no |
+| `channel` | object \| object | yes |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `container` | object | yes |
+| `channel` | object | yes |
+
+### `POST /api/v1/brain/topics/{id}/move-items`
+
+Move or link a Topic's requirements, tasks, documents and decisions into a Project (FR-1.9)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `projectId` | string | yes |
+| `entityIds` | array of string | yes |
+| `mode` | `move` \| `link` | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `moved` | array of string | yes |
+| `linked` | array of string | yes |
+| `skipped` | array of string | yes |
