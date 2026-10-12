@@ -53,7 +53,8 @@ The repository must be linked to the project (`railway link --project enterprise
 - An echo agent created with the admin API answered a mention from alice, posted through the public address, in 1.2 s. A second agent, created and mentioned at once, also answered in 1.2 s (D47).
 - No warnings or errors from our services. The relay refused the reader key for a moment on its very first start, until the bridge granted the membership; Mattermost warned about email (no SMTP) and Calls (no public IP).
 - `pnpm check:logs --env-only` found none of the 15 staging secrets in the runtime and build logs of all eleven services (22 files, 399 KiB). Key store secrets were not checked, because the state database is private.
-- Later the same day Mattermost was switched from Mostlymatter to our own build (D48) on the same data: it reports build `eb-v11.7.12-1` and no user limit, the sign-in page carries only the Enterprise Brain name and logo, the echo agent still answered in 1.2 s, and the logs again held no staging secret.
+- Release `eb-v11.7.12-2` then removed the System Console's Enterprise upgrade and trial offers, which the owner had found there; on staging the upgrade endpoint answers 501 and the echo agent answered in 1.4 s.
+- Earlier that day Mattermost was switched from Mostlymatter to our own build (D48) on the same data: it reports build `eb-v11.7.12-1` and no user limit, the sign-in page carries only the Enterprise Brain name and logo, the echo agent still answered in 1.2 s, and the logs again held no staging secret.
 
 ## Limits to know
 
