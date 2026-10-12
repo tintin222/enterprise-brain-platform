@@ -2,7 +2,7 @@
 
 Run on 2026-10-13 against branch `brain-phase1`, following `02-phase1-plan.md` section 17. The spec's gate for Phase 1 (`docs/COMPANY_BRAIN_SPEC.md` section 11): **one real Infinics client project and one internal topic fully described; "who knows about X" returns correct people; a non-technical user creates and completes a task without help.**
 
-Status: **the automated part passed; the three gate criteria are the owner's to run on staging** (Q25: the owner's people create their own project and topic). This report records what is built and verified, the numbers, what the owner's people must do, and what was not verified.
+Status: **the automated part passed (locally and in CI) and staging runs Phase 1; the three gate criteria are the owner's to run on staging** (Q25: the owner's people create their own project and topic). The branch `brain-phase1` stays unmerged until the owner accepts the gate. This report records what is built and verified, the numbers, what the owner's people must do, and what was not verified.
 
 ## 1. What was built, and the test behind each requirement
 
@@ -44,7 +44,7 @@ Phase 0 suites still pass on the Phase 1 store (`brain-api` 9 tests, `capture` 2
 
 - Unit tests: 112 across the packages (extractors, parsers, diff, schedule, store, models, catalog).
 - e2e, run locally against the dev stack on 2026-10-13: `brain-people` 5/5, `brain-workspaces` 6/6, `brain-documents` 5/5, `brain-systems` 3/3, `brain-tasks` 4/4, `brain-export` 1/1, `brain-api` 9/9.
-- CI (the whole suite on a fresh runner): PENDING_CI
+- CI, the whole suite on a fresh runner (run [38317075545](https://github.com/tintin222/enterprise-brain-platform/actions/runs/38317075545), commit 752ba37): typecheck, lint, 112 unit tests, the secret scan and the API reference check passed; e2e 71 passed, 3 skipped (the real-model tests, no key in CI), 16 files. The run before it had found one stale expectation in the Phase 0 export test (the manifest's format version), fixed the same evening.
 - Clean install: the Phase 0 bundle gained the Phase 1 settings (`install/config.example.env`); the nightly install job runs it.
 
 ## 3. NFR-1 after the rare-terms tier (Q24)
