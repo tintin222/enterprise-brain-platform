@@ -1,6 +1,5 @@
-// BrainClient: the seam to the enterprise brain (docs/agents-and-ingestion.md, A.6). Agents search it;
-// ingestion keeps its index in step with the relay. Until a brain API exists (Q3), PostgresBrainClient
-// (brain-postgres.ts) stands in behind the same interface (D34).
+// BrainClient: the seam to the brain (docs/agents-and-ingestion.md, A.6). Agents search it; ingestion keeps it
+// in step with the relay. The implementation is PostgresBrainClient in @brain/brain, over the knowledge store.
 
 export interface RetrievedPassage {
   id: string;
@@ -9,6 +8,16 @@ export interface RetrievedPassage {
   sourceUrl?: string;
   channelId?: string;
   score?: number;
+}
+
+/** One message inside a thread document, so a citation can point at the exact post (FR-9.3). */
+export interface MessageAnchor {
+  eventId: string;
+  postId?: string | undefined;
+  /** Permalink of the post, when known. */
+  url?: string | undefined;
+  author: string;
+  at: Date;
 }
 
 export interface BrainDocument {
@@ -22,6 +31,7 @@ export interface BrainDocument {
   lastAt: Date;
   sourceUrl?: string | undefined;
   eventIds: string[];
+  anchors?: MessageAnchor[] | undefined;
 }
 
 export interface BrainSearchInput {

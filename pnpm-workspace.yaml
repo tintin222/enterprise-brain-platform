@@ -6,6 +6,9 @@ packages:
 # Dependencies allowed to run install scripts (pnpm blocks all others).
 allowBuilds:
   esbuild: true
+  # Their install scripts are not needed (a banner and an optional codegen); pnpm would otherwise report them.
+  '@google/genai': false
+  protobufjs: false
 
 # Supply-chain guard: only resolve package versions published at least 7 days ago (minutes).
 minimumReleaseAge: 10080

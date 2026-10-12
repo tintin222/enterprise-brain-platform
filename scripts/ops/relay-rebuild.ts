@@ -3,9 +3,10 @@
 // and ingestion knew about the relay's contents (keys, enabled channels and purges stay) and makes the reader
 // key a relay member again. On their next start the bridge creates every enabled channel again and replays its
 // whole history from Mattermost as backfill, so agents do not answer it, and ingestion re-indexes everything.
+import { PostgresBrainClient } from '@brain/brain';
 import { resetForRelayRebuild as resetBridge } from '@brain/bridge';
 import { resetForRelayRebuild as resetIngestion } from '@brain/ingestion';
-import { createPool, migrate, nowSeconds, PostgresBrainClient, signerFromHex, withTransaction } from '@brain/shared';
+import { createPool, migrate, nowSeconds, signerFromHex, withTransaction } from '@brain/shared';
 import { INGESTION_MIGRATIONS_DIR } from '@brain/ingestion';
 import { loadEnv, requireValue } from '../lib/env.ts';
 import { adminEvent, relayClient } from '../keys/relay-ops.ts';

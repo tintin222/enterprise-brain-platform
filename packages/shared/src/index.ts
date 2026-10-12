@@ -3,7 +3,6 @@
 // import Mattermost or Nostr libraries (CLAUDE.md rule 6).
 export * from './async.ts';
 export * from './brain.ts';
-export * from './brain-postgres.ts';
 export * from './chat/client.ts';
 export * from './chat/events.ts';
 export * from './chat/types.ts';

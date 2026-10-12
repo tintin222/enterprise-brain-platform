@@ -1,5 +1,6 @@
 // Entry point: `pnpm ingestion` (reads .env from the repository root).
-import { BuzzRelayClient, createLogger, createPool, loadDotEnv, parseConfig, PostgresBrainClient } from '@brain/shared';
+import { PostgresBrainClient } from '@brain/brain';
+import { BuzzRelayClient, createLogger, createPool, loadDotEnv, parseConfig } from '@brain/shared';
 import { ingestionConfigSchema } from './config.ts';
 import { Ingestion } from './ingestion.ts';
 
@@ -7,8 +8,8 @@ loadDotEnv();
 const config = parseConfig(ingestionConfigSchema);
 const log = createLogger('ingestion', config.LOG_LEVEL);
 const pool = createPool(config.STATE_DATABASE_URL);
-// The local brain (D34) until the enterprise brain has an API (Q3).
-const brain = new PostgresBrainClient(pool);
+// The knowledge store: threads become conversation entities and chunks (docs/brain/01-phase0-plan.md section 6).
+const brain = new PostgresBrainClient(pool, { log });
 await brain.init();
 const ingestion = new Ingestion({ config, pool, relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }), brain, log });
 

@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
+import { PostgresBrainClient } from '@brain/brain';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
 import { Ingestion, ingestionConfigSchema } from '@brain/ingestion';
 import { MattermostApi, type MmPost, type MmUser } from '@brain/scripts/lib/mattermost.ts';
@@ -17,7 +18,6 @@ import {
   nowSeconds,
   NullBrainClient,
   parseConfig,
-  PostgresBrainClient,
   relayChannelIdFor,
   SecretKeySigner,
   signerFromHex,
@@ -60,7 +60,7 @@ export class Stack {
   readonly bridgeSigner: Signer;
   readonly store: BridgeStore;
   readonly identities: IdentityRepository;
-  /** The local brain (D34) that ingestion fills and agents search. */
+  /** The knowledge store that ingestion fills and agents search. */
   readonly brain: PostgresBrainClient;
   readonly env: Record<string, string | undefined>;
   #teamId: string | undefined;

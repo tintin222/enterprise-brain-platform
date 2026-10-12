@@ -203,12 +203,18 @@ importers:
       '@brain/agent-runtime':
         specifier: workspace:*
         version: link:../packages/agent-runtime
+      '@brain/brain':
+        specifier: workspace:*
+        version: link:../packages/brain
       '@brain/bridge':
         specifier: workspace:*
         version: link:../packages/bridge
       '@brain/ingestion':
         specifier: workspace:*
         version: link:../packages/ingestion
+      '@brain/models':
+        specifier: workspace:*
+        version: link:../packages/models
       '@brain/scripts':
         specifier: workspace:*
         version: link:../scripts
@@ -218,6 +224,9 @@ importers:
 
   packages/agent-runtime:
     dependencies:
+      '@brain/brain':
+        specifier: workspace:*
+        version: link:../brain
       '@brain/models':
         specifier: workspace:*
         version: link:../models
@@ -227,6 +236,15 @@ importers:
       zod:
         specifier: 4.6.5
         version: 4.6.5
+
+  packages/brain:
+    dependencies:
+      '@brain/models':
+        specifier: workspace:*
+        version: link:../models
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/bridge:
     dependencies:
@@ -239,6 +257,9 @@ importers:
 
   packages/ingestion:
     dependencies:
+      '@brain/brain':
+        specifier: workspace:*
+        version: link:../brain
       '@brain/shared':
         specifier: workspace:*
         version: link:../shared
@@ -288,6 +309,9 @@ importers:
       '@brain/agent-runtime':
         specifier: workspace:*
         version: link:../packages/agent-runtime
+      '@brain/brain':
+        specifier: workspace:*
+        version: link:../packages/brain
       '@brain/bridge':
         specifier: workspace:*
         version: link:../packages/bridge

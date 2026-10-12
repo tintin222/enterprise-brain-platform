@@ -1,6 +1,6 @@
 // Thread documents (docs/agents-and-ingestion.md B.2): a thread rendered as "Author: message" lines in time
 // order, split into overlapping chunks when long. Pure functions.
-import { messageTimeMs, threadDocId, threadOrder, type BrainDocument, type NostrEvent } from '@brain/shared';
+import { messageTimeMs, tagValue, threadDocId, threadOrder, type BrainDocument, type MessageAnchor, type NostrEvent } from '@brain/shared';
 
 export type ThreadMessage = Pick<NostrEvent, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>;
 
@@ -37,6 +37,8 @@ export interface ThreadDocumentInput {
   messages: ThreadMessage[];
   names: Map<string, string>;
   sourceUrl?: string | undefined;
+  /** The permalink of a Mattermost post, for message anchors. */
+  permalink?: ((postId: string) => string) | undefined;
   chunkChars: number;
 }
 
@@ -51,6 +53,10 @@ export function buildThreadDocuments(input: ThreadDocumentInput): BrainDocument[
   return groups.map((group, n) => {
     const part = group.map((i) => messages[i]!);
     const authors = [...new Map(part.map((message) => [message.pubkey, { id: message.pubkey, name: nameOf(message.pubkey) }])).values()];
+    const anchors: MessageAnchor[] = part.map((message) => {
+      const postId = tagValue(message, 'mm');
+      return { eventId: message.id, author: message.pubkey, at: new Date(messageTimeMs(message)), postId, url: postId && input.permalink ? input.permalink(postId) : undefined };
+    });
     return {
       id: groups.length === 1 ? base : `${base}:${n}`,
       text: group.map((i) => lines[i]!).join('\n'),
@@ -61,6 +67,7 @@ export function buildThreadDocuments(input: ThreadDocumentInput): BrainDocument[
       lastAt: new Date(messageTimeMs(part.at(-1)!)),
       sourceUrl: input.sourceUrl,
       eventIds: part.map((message) => message.id),
+      anchors,
     };
   });
 }

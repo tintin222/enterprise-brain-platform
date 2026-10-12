@@ -7,10 +7,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@brain/scripts": "workspace:*",
-    "@brain/shared": "workspace:*",
-    "@brain/bridge": "workspace:*",
     "@brain/agent-runtime": "workspace:*",
-    "@brain/ingestion": "workspace:*"
+    "@brain/brain": "workspace:*",
+    "@brain/bridge": "workspace:*",
+    "@brain/ingestion": "workspace:*",
+    "@brain/models": "workspace:*",
+    "@brain/scripts": "workspace:*",
+    "@brain/shared": "workspace:*"
   }
 }

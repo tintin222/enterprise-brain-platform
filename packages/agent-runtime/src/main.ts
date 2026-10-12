@@ -1,5 +1,7 @@
 // Entry point: `pnpm agent-runtime` (reads .env from the repository root).
-import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, parseConfig, PostgresBrainClient } from '@brain/shared';
+import { PostgresBrainClient } from '@brain/brain';
+import { embeddingProviderFromConfig } from '@brain/models';
+import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, parseConfig } from '@brain/shared';
 import { runtimeConfigSchema } from './config.ts';
 import { providersFromConfig } from './providers.ts';
 import { AgentRuntime } from './runtime.ts';
@@ -8,8 +10,8 @@ loadDotEnv();
 const config = parseConfig(runtimeConfigSchema);
 const log = createLogger('agent-runtime', config.LOG_LEVEL);
 const pool = createPool(config.STATE_DATABASE_URL);
-// The local brain (D34) until the enterprise brain has an API (Q3); ingestion fills it.
-const brain = new PostgresBrainClient(pool);
+// The knowledge store that ingestion fills; hybrid retrieval when an embedding provider is configured (D53).
+const brain = new PostgresBrainClient(pool, { embeddings: embeddingProviderFromConfig(config), log });
 await brain.init();
 const runtime = new AgentRuntime({
   config,

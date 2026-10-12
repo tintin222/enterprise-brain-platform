@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@brain/agent-runtime": "workspace:*",
+    "@brain/brain": "workspace:*",
     "@brain/bridge": "workspace:*",
     "@brain/ingestion": "workspace:*",
     "@brain/shared": "workspace:*",

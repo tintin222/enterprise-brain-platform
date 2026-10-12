@@ -1,7 +1,8 @@
 // pnpm ingest:purge --channel <relay channel id> | --author <pubkey>
 // Removes a channel's or an author's content from the brain and keeps it out (docs/agents-and-ingestion.md B.4).
 import { parseArgs } from 'node:util';
-import { baseConfigSchema, createPool, loadDotEnv, parseConfig, PostgresBrainClient } from '@brain/shared';
+import { PostgresBrainClient } from '@brain/brain';
+import { baseConfigSchema, createPool, loadDotEnv, parseConfig } from '@brain/shared';
 import { purgeAuthor, purgeChannel } from '../ingestion.ts';
 
 const { values } = parseArgs({ options: { channel: { type: 'string' }, author: { type: 'string' } } });

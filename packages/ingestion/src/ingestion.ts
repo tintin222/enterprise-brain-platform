@@ -313,6 +313,7 @@ export class Ingestion {
           messages,
           names: await this.#names.names(messages.map((message) => message.pubkey)),
           sourceUrl: postId ? permalinkFor(config.MM_URL, postId) : undefined,
+          permalink: (id) => permalinkFor(config.MM_URL, id),
           chunkChars: config.INGEST_CHUNK_CHARS,
         });
       }

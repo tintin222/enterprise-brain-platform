@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@brain/brain": "workspace:*",
     "@brain/models": "workspace:*",
     "@brain/shared": "workspace:*",
     "zod": "4.6.5"
