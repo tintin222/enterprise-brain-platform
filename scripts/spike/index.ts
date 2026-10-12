@@ -13,9 +13,14 @@ import { a11 } from './a11-bot-accounts.ts';
 import { a12 } from './a12-media.ts';
 import { acceptanceMm } from './acceptance-mm.ts';
 import { acceptanceRelay } from './acceptance-relay.ts';
+import { b01 } from './b01-mm-integrations.ts';
+import { b03 } from './b03-mm-oauth.ts';
+import { b04 } from './b04-mm-bot-files.ts';
 import type { Spike } from './lib/spike.ts';
 import { x01 } from './x01-xpubkey.ts';
 import { x02 } from './x02-user-limit.ts';
 import { x03 } from './x03-no-user-limit.ts';
 
-export const spikes: Spike[] = [acceptanceRelay, acceptanceMm, a01, a02, a03, a04, a05, a06, a07, a08, a09, a10, a11, a12, x01, x02, x03];
+// B1, B3 and B4 are the Company Brain's Phase 0 spikes (docs/brain/01-phase0-plan.md section 3); B5 is
+// infra/state-postgres and B6 is scripts/spike/b06-gemini.ts, which needs no stack.
+export const spikes: Spike[] = [acceptanceRelay, acceptanceMm, a01, a02, a03, a04, a05, a06, a07, a08, a09, a10, a11, a12, x01, x02, x03, b01, b03, b04];

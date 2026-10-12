@@ -1,7 +1,7 @@
 // Context assembly (docs/agents-and-ingestion.md, A.4): the thread up to the triggering message and channel
 // background, read from the relay with the reader key. Names come from ProfileNames in @brain/shared.
 import { applyEdits, messageTimeSeconds, tagValue, threadOrder, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
-import type { ConversationTurn } from './llm/types.ts';
+import type { ConversationTurn } from '@brain/models';
 
 export interface ChannelInfo {
   name: string;

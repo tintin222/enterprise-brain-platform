@@ -10,11 +10,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "nostr-tools": "2.25.2",
-    "@brain/shared": "workspace:*",
+    "@brain/agent-runtime": "workspace:*",
     "@brain/bridge": "workspace:*",
     "@brain/ingestion": "workspace:*",
-    "@brain/agent-runtime": "workspace:*"
+    "@brain/shared": "workspace:*",
+    "@google/genai": "2.27.0",
+    "nostr-tools": "2.25.2"
   },
   "devDependencies": {
     "emoji-datasource": "16.0.0"

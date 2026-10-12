@@ -31,6 +31,15 @@ export interface MmPost {
   edit_at: number;
   delete_at: number;
   props?: Record<string, unknown>;
+  file_ids?: string[];
+  metadata?: { files?: MmFileInfo[] };
+}
+
+export interface MmFileInfo {
+  id: string;
+  name: string;
+  size: number;
+  mime_type: string;
 }
 
 export class MattermostApi {

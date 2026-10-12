@@ -1,3 +1,4 @@
+import { modelConfigSchema } from '@brain/models';
 import { baseConfigSchema, chatConfigSchema, relayConfigSchema, secretKeySchema } from '@brain/shared';
 import { z } from 'zod';
 
@@ -5,6 +6,8 @@ import { z } from 'zod';
 export const runtimeConfigSchema = z.object({
   ...baseConfigSchema.shape,
   ...relayConfigSchema.shape,
+  /** Providers, model ids and keys (D21, D54, D56). */
+  ...modelConfigSchema.shape,
   MAX_EVENT_AGE_SECONDS: z.coerce.number().int().min(1).default(600),
   RELAY_OVERLAP_SECONDS: z.coerce.number().int().min(0).default(600),
   MAX_REPLIES_PER_THREAD: z.coerce.number().int().min(1).default(10),
@@ -13,12 +16,6 @@ export const runtimeConfigSchema = z.object({
   /** How often the agent list is re-read; a mention of an unknown key also re-reads it. */
   AGENT_REFRESH_SECONDS: z.coerce.number().int().min(1).default(30),
   CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(1000).default(60_000),
-  /** Required only for agents that use a model (not "echo"). */
-  ANTHROPIC_API_KEY: z.string().optional(),
-  /** Default model id (D21); an agent's own `model` overrides it. */
-  LLM_MODEL: z.string().min(1).default('claude-opus-5-5'),
-  LLM_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
-  LLM_MAX_TOKENS: z.coerce.number().int().min(256).default(16_000),
   /** /healthz, /readyz and /metrics (0 picks a free port). */
   RUNTIME_OPS_PORT: z.coerce.number().int().min(0).max(65535).default(9102),
 });

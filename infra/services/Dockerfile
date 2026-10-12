@@ -10,6 +10,7 @@ WORKDIR /app
 # Workspace manifests first, so dependency layers are reused when only source changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/models/package.json packages/models/
 COPY packages/bridge/package.json packages/bridge/
 COPY packages/agent-runtime/package.json packages/agent-runtime/
 COPY packages/ingestion/package.json packages/ingestion/

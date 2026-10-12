@@ -34,9 +34,8 @@ import {
 } from '@brain/shared';
 import type { RuntimeConfig } from './config.ts';
 import { channelInfo, threadEvents, toConversation } from './context.ts';
+import { systemPrompt, type LlmProvider } from '@brain/models';
 import { JobStore, type Job } from './jobs.ts';
-import { systemPrompt } from './llm/prompt.ts';
-import type { LlmProvider } from './llm/types.ts';
 import { AgentRepository, RUNTIME_MIGRATIONS_DIR, type AgentRecord } from './registry.ts';
 import { evaluateTriggers, membersOf, mentionsExplicitly } from './triggers.ts';
 
@@ -345,8 +344,9 @@ export class AgentRuntime {
         })
       : [];
     const knowledge = found.filter((passage) => !isThreadDoc(passage.id, job.relayChannelId, job.threadRootId)).slice(0, KNOWLEDGE_LIMIT);
-    const result = await this.#deps.providerFor(agent).generate({
-      model: agent.model || config.LLM_MODEL,
+    const provider = this.#deps.providerFor(agent);
+    const result = await provider.generate({
+      model: agent.model || provider.defaultModel,
       instructions: systemPrompt({ agentName: agent.displayName, instructions: agent.instructions }),
       channel,
       conversation,

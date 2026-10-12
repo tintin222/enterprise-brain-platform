@@ -183,9 +183,13 @@ services:
       '
     restart: "no"
 
-  # --- Our state (bridge, agent runtime, ingestion) ---
+  # --- Our state (bridge, agent runtime, ingestion, the brain) ---
   state-postgres:
-    image: *postgres-image
+    # The pinned Postgres image plus pgvector for the brain's semantic search (D52); built from infra/state-postgres.
+    image: enterprise-brain/state-postgres:17.11-pgvector-0.8.7
+    build:
+      context: ./state-postgres
+    pull_policy: build
     environment:
       POSTGRES_DB: brain
       POSTGRES_USER: brain

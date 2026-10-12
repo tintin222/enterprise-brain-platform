@@ -1,21 +1,24 @@
-// pnpm agent:provision --handle <handle> --name "<Display Name>" [--model <id>] [--instructions "<text>"]
+// pnpm agent:provision --handle <handle> --name "<Display Name>" [--provider anthropic|google|echo] [--model <id>] [--instructions "<text>"]
 // Creates (or updates) an agent: key, Mattermost bot and token, relay identity, registry record.
 import { parseArgs } from 'node:util';
 import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, MattermostChatClient, parseConfig, signerFromHex } from '@brain/shared';
 import { provisionConfigSchema } from '../config.ts';
 import { provisionAgent } from '../provisioning.ts';
+import type { AgentProvider } from '../registry.ts';
 
 const { values } = parseArgs({
   options: {
     handle: { type: 'string' },
     name: { type: 'string' },
+    provider: { type: 'string' },
     model: { type: 'string' },
     instructions: { type: 'string' },
     description: { type: 'string' },
   },
 });
-if (!values.handle || !values.name) {
-  console.error('Usage: pnpm agent:provision --handle <handle> --name "<Display Name>" [--model <id>] [--instructions "<text>"]');
+const providers: AgentProvider[] = ['anthropic', 'google', 'echo'];
+if (!values.handle || !values.name || (values.provider !== undefined && !providers.includes(values.provider as AgentProvider))) {
+  console.error('Usage: pnpm agent:provision --handle <handle> --name "<Display Name>" [--provider anthropic|google|echo] [--model <id>] [--instructions "<text>"]');
   process.exit(2);
 }
 
@@ -37,6 +40,7 @@ try {
     {
       handle: values.handle,
       displayName: values.name,
+      ...(values.provider === undefined ? {} : { provider: values.provider as AgentProvider }),
       ...(values.model === undefined ? {} : { model: values.model }),
       ...(values.instructions === undefined ? {} : { instructions: values.instructions }),
       ...(values.description === undefined ? {} : { description: values.description }),

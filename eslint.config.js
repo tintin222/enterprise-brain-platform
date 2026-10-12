@@ -17,13 +17,13 @@ export default defineConfig(
     },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.js', '**/*.mjs'],
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
     // CLAUDE.md rule 6: only @brain/shared (ChatClient, RelayClient) talks to upstream libraries.
     // scripts/ is exempt: spike and seed scripts test the raw upstream APIs.
-    files: ['packages/bridge/**', 'packages/agent-runtime/**', 'packages/ingestion/**'],
+    files: ['packages/bridge/**', 'packages/agent-runtime/**', 'packages/ingestion/**', 'packages/models/**', 'packages/brain/**', 'packages/brain-api/**', 'packages/brain-web/**'],
     rules: {
       'no-restricted-imports': [
         'error',

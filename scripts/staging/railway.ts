@@ -48,9 +48,9 @@ function pick(env: EnvValues, keys: string[]): Record<string, string> {
 
 const internal = (service: string, port: number): string => `${service}.railway.internal:${port}`;
 
-const postgres = (name: string, database: string, user: string, passwordKey: string): ServiceSpec => ({
+const postgres = (name: string, database: string, user: string, passwordKey: string, dir = 'infra/staging/postgres'): ServiceSpec => ({
   name,
-  dir: 'infra/staging/postgres',
+  dir,
   volume: '/var/lib/postgresql/data',
   variables: (env) => ({ POSTGRES_DB: database, POSTGRES_USER: user, POSTGRES_PASSWORD: need(env, passwordKey) }),
 });
@@ -69,7 +69,8 @@ const app = (name: string, program: string, portKey: string, healthPath: string,
 const DATA: ServiceSpec[] = [
   postgres('mm-postgres', 'mattermost', 'mmuser', 'MM_DB_PASSWORD'),
   postgres('buzz-postgres', 'buzz', 'buzz', 'BUZZ_DB_PASSWORD'),
-  postgres('state-postgres', 'brain', 'brain', 'STATE_DB_PASSWORD'),
+  // Our state database carries pgvector (D52): the same pinned image, built with the extension.
+  postgres('state-postgres', 'brain', 'brain', 'STATE_DB_PASSWORD', 'infra/state-postgres'),
   { name: 'buzz-redis', dir: 'infra/staging/redis', volume: '/data', variables: (env) => ({ REDIS_PASSWORD: need(env, 'BUZZ_REDIS_PASSWORD') }) },
   {
     name: 'buzz-s3',

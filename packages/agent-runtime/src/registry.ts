@@ -11,7 +11,9 @@ export interface AgentRecord {
   displayName: string;
   avatarUrl: string | null;
   instructions: string;
-  /** Model id for the LLM provider; empty means the configured default. "echo" selects the echo provider. */
+  /** The model vendor; empty means the installation default (LLM_PROVIDER). */
+  provider: AgentProvider;
+  /** Model id for the LLM provider; empty means the provider's configured default. "echo" selects the echo provider. */
   model: string;
   tools: string[];
   knowledgeScope: string[];
@@ -20,12 +22,15 @@ export interface AgentRecord {
   status: 'active' | 'disabled';
 }
 
+export type AgentProvider = '' | 'anthropic' | 'google' | 'echo';
+
 interface AgentRow {
   agent_id: string;
   handle: string;
   display_name: string;
   avatar_url: string | null;
   instructions: string;
+  provider: AgentProvider;
   model: string;
   tools: string[];
   knowledge_scope: string[];
@@ -34,7 +39,7 @@ interface AgentRow {
   status: 'active' | 'disabled';
 }
 
-const COLUMNS = 'agent_id, handle, display_name, avatar_url, instructions, model, tools, knowledge_scope, nostr_pubkey, mm_bot_user_id, status';
+const COLUMNS = 'agent_id, handle, display_name, avatar_url, instructions, provider, model, tools, knowledge_scope, nostr_pubkey, mm_bot_user_id, status';
 
 const toRecord = (r: AgentRow): AgentRecord => ({
   agentId: r.agent_id,
@@ -42,6 +47,7 @@ const toRecord = (r: AgentRow): AgentRecord => ({
   displayName: r.display_name,
   avatarUrl: r.avatar_url,
   instructions: r.instructions,
+  provider: r.provider,
   model: r.model,
   tools: r.tools,
   knowledgeScope: r.knowledge_scope,
@@ -79,10 +85,10 @@ export class AgentRepository {
 
   async upsert(record: AgentRecord): Promise<AgentRecord> {
     const r = await this.#db.query<AgentRow>(
-      `INSERT INTO runtime.agents (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO runtime.agents (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (agent_id) DO UPDATE SET
          display_name = EXCLUDED.display_name, avatar_url = EXCLUDED.avatar_url, instructions = EXCLUDED.instructions,
-         model = EXCLUDED.model, tools = EXCLUDED.tools, knowledge_scope = EXCLUDED.knowledge_scope,
+         provider = EXCLUDED.provider, model = EXCLUDED.model, tools = EXCLUDED.tools, knowledge_scope = EXCLUDED.knowledge_scope,
          status = EXCLUDED.status, updated_at = now()
        RETURNING ${COLUMNS}`,
       [
@@ -91,6 +97,7 @@ export class AgentRepository {
         record.displayName,
         record.avatarUrl,
         record.instructions,
+        record.provider,
         record.model,
         JSON.stringify(record.tools),
         JSON.stringify(record.knowledgeScope),

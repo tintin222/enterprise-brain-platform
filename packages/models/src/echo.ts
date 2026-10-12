@@ -6,6 +6,9 @@ import type { GenerateInput, GenerateResult, LlmProvider } from './types.ts';
 export const ECHO_MODEL = 'echo';
 
 export class EchoProvider implements LlmProvider {
+  readonly name = 'echo' as const;
+  readonly defaultModel = ECHO_MODEL;
+
   generate(input: GenerateInput): Promise<GenerateResult> {
     const last = input.conversation.at(-1);
     const lines = [`echo: ${last?.text ?? ''}`];

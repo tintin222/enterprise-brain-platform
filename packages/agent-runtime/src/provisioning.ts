@@ -16,7 +16,7 @@ import {
   type RelayClient,
   type Signer,
 } from '@brain/shared';
-import { AgentRepository, RUNTIME_MIGRATIONS_DIR, type AgentRecord } from './registry.ts';
+import { AgentRepository, RUNTIME_MIGRATIONS_DIR, type AgentProvider, type AgentRecord } from './registry.ts';
 
 export interface ProvisionInput {
   /** Mattermost username of the agent's bot: 3-22 characters, lowercase letters, digits, ".", "-", "_". */
@@ -24,6 +24,8 @@ export interface ProvisionInput {
   displayName: string;
   description?: string;
   instructions?: string;
+  /** The model vendor; empty means the installation default (D54). */
+  provider?: AgentProvider;
   model?: string;
   tools?: string[];
   knowledgeScope?: string[];
@@ -108,6 +110,7 @@ export async function provisionAgent(deps: ProvisionDeps, input: ProvisionInput)
     displayName: input.displayName,
     avatarUrl: previous?.avatarUrl ?? null,
     instructions: input.instructions ?? previous?.instructions ?? '',
+    provider: input.provider ?? previous?.provider ?? '',
     model: input.model ?? previous?.model ?? '',
     tools: input.tools ?? previous?.tools ?? [],
     knowledgeScope: input.knowledgeScope ?? previous?.knowledgeScope ?? [],

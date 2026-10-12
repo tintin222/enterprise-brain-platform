@@ -295,9 +295,9 @@ Every string lives in `packages/brain-web/src/i18n/en.json` (FormatJS); a unit t
 **In chat:**
 
 - `/brain search <text>` answers with an ephemeral list of results and links to the pages; `/brain link` opens a dialog to attach the current channel to a Project or Topic (a select of the containers the person can see) and confirms in the channel; `/brain help`. The command is registered per team by the installer and the seed; its callbacks prove the command, dialog and button paths that Phase 1's `/project` and `/topic` reuse.
-- When a channel is linked, `@brain` adds a channel bookmark "Brain: <container>" pointing at the container page.
+- When a channel is linked, `@brain` posts and pins a short message with the link to the container page (channel bookmarks need a licence, spike B1; D57).
 
-**ChatClient additions** (all through `packages/shared`, rule 6): `createChannel`, `patchChannel`, `getTeamChannels` (public and private, admin), `getUserTeamChannels`, `getFile`, `createEphemeralPost`, `listCommands`, `createCommand`, `updateCommand`, `openDialog`, `createChannelBookmark`, `createOAuthApp`, `exchangeOAuthCode`, `patchConfig`, `createDirectChannel` (used from Phase 2, added with its test now only if a Phase 0 test needs it).
+**ChatClient additions** (all through `packages/shared`, rule 6): `createChannel`, `patchChannel`, `getTeamChannels` (public and private, admin), `getUserTeamChannels`, `getFile`, `createEphemeralPost`, `pinPost`, `listCommands`, `createCommand`, `updateCommand`, `openDialog`, `createOAuthApp`, `exchangeOAuthCode`, `patchConfig`, `createDirectChannel` (used from Phase 2, added with its test now only if a Phase 0 test needs it).
 
 ## 11. Feature flags and configuration (D55)
 

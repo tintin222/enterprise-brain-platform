@@ -20,7 +20,7 @@ const runtime = new AgentRuntime({
   providerFor: providersFromConfig(config),
   log,
 });
-if (!config.ANTHROPIC_API_KEY) log.warn('ANTHROPIC_API_KEY is not set: only agents with model "echo" will answer');
+if (!config.ANTHROPIC_API_KEY && !config.GEMINI_API_KEY) log.warn('Neither ANTHROPIC_API_KEY nor GEMINI_API_KEY is set: only agents with model "echo" will answer');
 
 let stopping = false;
 const shutdown = (signal: string): void => {

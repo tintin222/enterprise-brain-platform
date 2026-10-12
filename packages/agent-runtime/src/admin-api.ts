@@ -30,6 +30,8 @@ export interface AdminApiDeps {
 const createAgentInput = z.object({
   handle: z.string().regex(/^[a-z][a-z0-9._-]{2,21}$/, '3-22 characters: lowercase letters, digits, ".", "-", "_"'),
   name: z.string().trim().min(1).max(64),
+  /** The model vendor; empty means the installation default (D54). */
+  provider: z.enum(['anthropic', 'google', 'echo']).optional(),
   model: z.string().max(100).optional(),
   instructions: z.string().max(20_000).optional(),
   description: z.string().max(1024).optional(),
@@ -50,7 +52,7 @@ class HttpError extends Error {
 
 /** What the API shows of an agent: never keys or tokens. */
 function publicAgent(agent: AgentRecord): Record<string, unknown> {
-  return { handle: agent.handle, displayName: agent.displayName, model: agent.model, status: agent.status, mmBotUserId: agent.mmBotUserId, nostrPubkey: agent.nostrPubkey };
+  return { handle: agent.handle, displayName: agent.displayName, provider: agent.provider, model: agent.model, status: agent.status, mmBotUserId: agent.mmBotUserId, nostrPubkey: agent.nostrPubkey };
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
@@ -109,7 +111,14 @@ export async function startAdminApi(deps: AdminApiDeps): Promise<AdminApi> {
       const input = parse(createAgentInput, await readJson(request));
       const agent = await provisionAgent(
         { pool: deps.pool, chat: deps.chat, relay: deps.relay, keyStore: deps.keyStore, bridgeSigner: deps.bridgeSigner, teamName: deps.teamName, log: deps.log },
-        { handle: input.handle, displayName: input.name, ...(input.model === undefined ? {} : { model: input.model }), ...(input.instructions === undefined ? {} : { instructions: input.instructions }), ...(input.description === undefined ? {} : { description: input.description }) },
+        {
+          handle: input.handle,
+          displayName: input.name,
+          ...(input.provider === undefined ? {} : { provider: input.provider }),
+          ...(input.model === undefined ? {} : { model: input.model }),
+          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+          ...(input.description === undefined ? {} : { description: input.description }),
+        },
       );
       return [201, { agent: publicAgent(agent) }];
     }
