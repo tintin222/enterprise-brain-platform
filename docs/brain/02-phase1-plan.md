@@ -1,6 +1,6 @@
 # Phase 1 plan: Project and topic memory
 
-Step 2 of the spec's workflow for the second phase (`docs/COMPANY_BRAIN_SPEC.md` sections 11 and 12). Written on 2026-10-12 after the owner accepted Phase 0 (`gates/phase-0.md`). Nothing in it is built until the owner approves it; the asks are in section 18.
+Step 2 of the spec's workflow for the second phase (`docs/COMPANY_BRAIN_SPEC.md` sections 11 and 12). Written on 2026-10-12 after the owner accepted Phase 0 (`gates/phase-0.md`); **approved by the owner the same day** with the answers recorded in section 18 (D63 to D65, Q25, Q26). Section 19 is the task list.
 
 ## 1. Scope and gate
 
@@ -135,19 +135,35 @@ New or extended pages, every string in the catalog (NFR-10): project home and to
 
 ## 17. Gate procedure (`gates/phase-1.md`)
 
-1. **The real project and topic** on staging: the owner names one Infinics client project and one internal topic (ask 5). I create them from the owner's facts (people, roles, systems, documents, milestones) through the pages and commands, or the owner does with me watching the logs; "fully described" means every panel of the home page has real content and every document is extracted and searchable.
+1. **The real project and topic** on staging: the owner's people create them themselves through the pages and commands (Q25), with no fixture or help from me beyond the pages' own text; "fully described" means every panel of the home page has real content and every document is extracted and searchable. I watch the logs and the audit trail and record what they had to ask.
 2. **"Who knows about X"** on that data: the owner gives five questions with the person they expect; the people search must rank each expected person first or second.
 3. **A non-technical user creates and completes a task without help:** someone from the owner's side who has not seen the pages, with the owner watching; no instruction beyond the address. Recorded as pass or fail with what confused them.
 4. Automated: the e2e list above green in CI, the bench numbers, the install test still passing, the Phase 0 gate test re-run.
 5. What was not verified, as in Phase 0.
 
-## 18. What I need from the owner
+## 18. What I asked the owner, and the answers (2026-10-12)
 
-Plain words, with my recommendation first.
+1. **Approve this plan.** Approved.
+2. **Where to keep uploaded files.** "database": in our database behind a `FileStore` interface, 50 MB per file by default (D63).
+3. **New libraries for reading documents** (`pdfjs-dist`, `mammoth`, `exceljs`, `jszip`, `yaml`). Yes (D64).
+4. **OCR for scanned PDFs and images.** "ok gemini": the model provider reads them, never for confidential or no-ai files, switchable per installation (D65).
+5. **The gate's real project and topic.** "let the user decide and be able to create their own project or topic": no fixture; the owner's people create their own, and the gate is run on those (Q25).
+6. **Two parts of FR-3 deferred** (live database introspection, WSDL and Postman structure). Confirmed deferred (Q26).
 
-1. **Approve this plan.** Details that turn out differently during implementation come back in the phase report; anything touching the data or container model comes back as a question first.
-2. **Where to keep uploaded files.** Recommended: in our database, capped at 50 MB per file (one backup, one export, nothing new to run). Alternative: the S3-compatible store the stack already runs for the relay (better for very large installations, one more credential to manage). Say "database" or "S3".
-3. **New libraries for reading documents** (all open-source, pinned, read-only parsers): `pdfjs-dist` (PDF text), `mammoth` (Word), `exceljs` (Excel), `jszip` (PowerPoint and zip archives), `yaml` (OpenAPI files). Recommended: yes to all five.
-4. **OCR for scanned PDFs and images.** Recommended: use the installation's model provider (your Gemini key) to read them, only for files not marked confidential or no-ai, switchable per installation (`BRAIN_FEATURE_OCR_MODEL`). Alternative: a local OCR engine (`tesseract.js`, slower and heavy) or no OCR in Phase 1 (such files searchable by name only).
-5. **The gate's real project and topic.** Which client project and which internal topic, and who gives me their facts and documents (or enters them). Needed only when Phase 1 is nearly done; say now if you already know.
-6. **Two pieces of FR-3 deferred:** connecting to a database read-only to introspect it (after the vault, Phase 3) and parsing WSDL and Postman files into structure (stored and searchable as text in Phase 1). Say if either must be in Phase 1.
+## 19. Task list
+
+In order; each task ends with its tests green and its docs updated. Ids go in commit messages with the FR/NFR ids.
+
+| # | Task | Spec ids | Done when |
+| --- | --- | --- | --- |
+| T1.1 | Foundations: migrations 0007 and 0008, `FileStore` in the database (D63), the jobs runner with its lock and metrics, feature flags and settings, `ChatClient` additions (user listing and profiles, direct messages with buttons, channel creation in a team) | section 11, 13, 14 | Unit tests for the runner and the file store; the Phase 0 suites still green |
+| T1.2 | People: person entities from Mattermost accounts (sync job and first sight), external contacts, roles per container, the access policy with roles, API and pages | FR-2.1, 2.2, 2.3, 2.5 | e2e: first sign-in creates the person; roles grant access; external contact |
+| T1.3 | Projects and Topics: `POST /projects` with the channel group, `POST /topics`, spawn from a Topic and move items, the home endpoint and pages with panels, timeline, stale job, archive, `/project` and `/topic` commands with dialogs | FR-1.1 to 1.10 | e2e per requirement; the home page renders every panel |
+| T1.4 | Documents: upload, extraction worker with the parsers (D64) and model OCR (D65), chunks and embeddings, versions by name, flags, confidential access with audit, chat attachments through ingestion, document page and drag-and-drop | FR-5.1 to 5.6 | e2e: upload searchable in 5 s; version by name; confidential refused and audited; chat attachment ingested; no-ai never sent to the provider |
+| T1.5 | Systems: entity and page, artifacts with the DDL and OpenAPI parsers, integration links, inventory, version diff endpoint and view | FR-3.1 to 3.7 | e2e: a system with a DDL and an OpenAPI upload, structure parsed, diff shown |
+| T1.6 | Tasks: model and API, list, board and "My tasks" pages, `/task` and the "Make a task" message action, reminders job with done, snooze and reassign buttons, proposal endpoints | FR-11.1 to 11.3 | e2e: created from chat, moved on the board, completed; the reminder with its buttons; a proposal accepted |
+| T1.7 | Search: "who knows about X", lexeme statistics and the rarest-terms fallback (Q24), type and container facets | FR-2.4, FR-9.1, NFR-1 | e2e for the people search; bench question series p95 under 1.5 s at 250 k chunks |
+| T1.8 | Export: files in the export, `pnpm brain:export <dir> --verify` with the import into an empty database | NFR-9 | Round trip of counts, ids, versions and file hashes |
+| T1.9 | Documentation, `API.md`, `CHANGELOG.md`, install and staging configuration, staging deployment, the gate run and `gates/phase-1.md` | all | Gate report written; owner's people have what they need to run the gate |
+
+Dependencies: T1.1 before everything; T1.2 before T1.3 (owners and roles) and T1.6 (assignees); T1.4 before T1.5 (artifacts are documents); T1.7 and T1.8 after T1.4; T1.9 last.
