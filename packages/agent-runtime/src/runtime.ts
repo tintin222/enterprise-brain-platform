@@ -9,7 +9,9 @@ import {
   IDENTITY_MIGRATIONS_DIR,
   KeyedQueue,
   migrate,
+  isThreadDoc,
   nowSeconds,
+  ProfileNames,
   RelaySession,
   RelaySubscriber,
   signerFromHex,
@@ -25,7 +27,7 @@ import {
   type UnsignedEvent,
 } from '@brain/shared';
 import type { RuntimeConfig } from './config.ts';
-import { channelInfo, ProfileNames, threadEvents, toConversation } from './context.ts';
+import { channelInfo, threadEvents, toConversation } from './context.ts';
 import { JobStore, type Job } from './jobs.ts';
 import { systemPrompt } from './llm/prompt.ts';
 import type { LlmProvider } from './llm/types.ts';
@@ -37,6 +39,16 @@ export const DECLINED = "Sorry, I can't help with that.";
 const MAX_ATTEMPTS = 3;
 const TYPING_INTERVAL_MS = 4000;
 const AGENT_REFRESH_MS = 30_000;
+/** Knowledge passages per answer. */
+const KNOWLEDGE_LIMIT = 5;
+
+/** The search query for a message: its text without @mentions, which name agents rather than topics. */
+export function knowledgeQuery(text: string): string {
+  return text
+    .replace(/(^|\s)@[\w.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export interface AgentRuntimeDeps {
   config: RuntimeConfig;
@@ -285,12 +297,15 @@ export class AgentRuntime {
     for (const known of this.#byId.values()) if (names.has(known.nostrPubkey)) names.set(known.nostrPubkey, known.displayName);
     const conversation = toConversation(events, names, this.#agentPubkeys, agent.nostrPubkey, config.CONTEXT_CHAR_BUDGET);
     const channel = await channelInfo(relay, this.#reader, job.relayChannelId);
-    const knowledge = await brain
-      .search({ query: trigger.content, channelId: job.relayChannelId, requesterId: trigger.pubkey, scope: agent.knowledgeScope, limit: 5 })
-      .catch((error: unknown) => {
-        this.#deps.log.warn(errorFields(error), 'Knowledge search failed; answering without it');
-        return [];
-      });
+    // The thread itself is already in the conversation, so its own document is left out.
+    const query = knowledgeQuery(trigger.content);
+    const found = query
+      ? await brain.search({ query, channelId: job.relayChannelId, requesterId: trigger.pubkey, scope: agent.knowledgeScope, limit: KNOWLEDGE_LIMIT + 2 }).catch((error: unknown) => {
+          this.#deps.log.warn(errorFields(error), 'Knowledge search failed; answering without it');
+          return [];
+        })
+      : [];
+    const knowledge = found.filter((passage) => !isThreadDoc(passage.id, job.relayChannelId, job.threadRootId)).slice(0, KNOWLEDGE_LIMIT);
     const result = await this.#deps.providerFor(agent).generate({
       model: agent.model || config.LLM_MODEL,
       instructions: systemPrompt({ agentName: agent.displayName, channelName: channel.name, channelAbout: channel.about, instructions: agent.instructions }),

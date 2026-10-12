@@ -1,5 +1,5 @@
 // Entry point: `pnpm agent-runtime` (reads .env from the repository root).
-import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, NullBrainClient, parseConfig } from '@brain/shared';
+import { BuzzRelayClient, createLogger, createPool, KeyStore, loadDotEnv, parseConfig, PostgresBrainClient } from '@brain/shared';
 import { runtimeConfigSchema } from './config.ts';
 import { providersFromConfig } from './providers.ts';
 import { AgentRuntime } from './runtime.ts';
@@ -8,12 +8,15 @@ loadDotEnv();
 const config = parseConfig(runtimeConfigSchema);
 const log = createLogger('agent-runtime', config.LOG_LEVEL);
 const pool = createPool(config.STATE_DATABASE_URL);
+// The local brain (D34) until the enterprise brain has an API (Q3); ingestion fills it.
+const brain = new PostgresBrainClient(pool);
+await brain.init();
 const runtime = new AgentRuntime({
   config,
   pool,
   relay: new BuzzRelayClient(config.RELAY_HTTP_URL),
   keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
-  brain: new NullBrainClient(),
+  brain,
   providerFor: providersFromConfig(config),
   log,
 });

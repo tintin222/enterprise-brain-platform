@@ -56,7 +56,7 @@ For a job, assemble:
 
 1. **Thread.** The root event and its replies, oldest first, each as `{author display name, role (person or agent), time, text}`, with each message's newest edit (kind 40003 by its author) applied; the relay already hides deleted messages. Cap by token budget, keeping the root and the most recent messages.
 2. **Channel background.** Channel name and purpose, plus the last few channel messages before the thread if the thread is short.
-3. **Retrieved knowledge.** Query the brain with the question, passing the channel id and the asking person's identity so retrieval honours access rules.
+3. **Retrieved knowledge.** Query the brain with the question, passing the channel id and the asking person's identity so retrieval honours access rules. As built: the query is the triggering message without its @mentions, the current thread's own document is left out (it is already in the conversation), and up to 5 passages are passed with their source links, which the model is told to cite.
 
 Present chat content to the model as quoted conversation material. The agent's instructions and tool permissions come only from the registry.
 
@@ -95,21 +95,24 @@ interface BrainClient {
 
   upsertDocuments(docs: BrainDocument[]): Promise<void>;
   deleteDocuments(ids: string[]): Promise<void>;
+  // Added in Phase 5: the channel facts needed to scope access at query time (B.3, D36).
+  upsertChannels(channels: { channelId: string; name: string; visibility: 'open' | 'private'; active: boolean }[]): Promise<void>;
 }
 ```
 
 The default `LlmProvider` implementation uses the Anthropic Messages API through the official SDK (`@anthropic-ai/sdk`). The model id comes from configuration, default `claude-opus-5-5`, and an agent's `model` field overrides it; the API key comes from the environment (D21). Set effort explicitly, check `stop_reason` for refusals, and enable the API's server-side refusal fallback. Confirm current model identifiers and API details against the provider's documentation at build time.
 
-If the brain has no API yet, implement `BrainClient` against a local Postgres table with vector search behind the same interface, so the rest of the system does not change later.
+If the brain has no API yet, implement `BrainClient` against a local Postgres table with vector search behind the same interface, so the rest of the system does not change later. As built: `PostgresBrainClient` (schema `brain`) uses Postgres full-text search instead of vectors, because no embeddings provider is configured (D34).
 
 ## Part B: Ingestion
 
 ### B.1 Consumer
 
-- One relay subscription per active channel as the shared reader key **(A7)**, plus catch-up on start using the same overlap-and-dedupe approach as the bridge, paging `POST /query` with `until` and `before_id` (`docs/bridge-spec.md`, section 8).
+- One relay subscription per active channel as the shared reader key **(A7)**, plus catch-up on start using the same overlap-and-dedupe approach as the bridge, paging `POST /query` with `until` and `before_id` (`docs/bridge-spec.md`, section 8). As built: active channels are the reader's (ChannelWatcher, as in agent-runtime); catch-up is one paged query across channels (D27) with its own cursor, and the first run reads all history.
 - Its own cursor table; it must not depend on the bridge's cursors.
-- Handles: kind 9 (message), kind 40003 (edit: a separate event; the newest per target by `created_at` wins), kind 5 and 9005 (deletion: the relay hides deleted events from queries, the deletion event itself stays visible), kind 39000 (channel metadata), kind 39002 (membership, for access checks).
-- Idempotent by event id.
+- Handles: kind 9 (message), kind 40003 (edit: a separate event; the newest per target by `created_at` wins), kind 5 and 9005 (deletion: the relay hides deleted events from queries, the deletion event itself stays visible), kind 39000 (channel metadata, delivered live on the channel's `#h` subscription), kind 39002 (membership, for access checks). As built, 39002 is not needed: access follows visibility (B.3).
+- Idempotent by event id. Every message's thread is recorded (`ingestion.messages`), because an edit or deletion names only its target and the relay hides deleted events.
+- A change marks its thread pending in a table: the first change sets when it is due (the debounce), later ones only count. When due, the thread is read again from the relay (root, replies, newest edits), rendered and upserted, or deleted when nothing is left. A change that lands during indexing keeps the thread pending for another pass, and the table survives restarts.
 
 ### B.2 Document model
 
@@ -122,10 +125,10 @@ Index threads, not single messages. A message without replies is a thread of one
 | `channel_id`, `channel_name` | For filtering and display |
 | `authors` | Display names and stable ids |
 | `first_at`, `last_at` | Time range, from each message's `mm_ts` tag when present, otherwise `created_at` (A5) |
-| `source_url` | Mattermost permalink of the root post (looked up through the bridge's `message_map`) |
+| `source_url` | Mattermost permalink of the root post. As built: `{MM_URL}/_redirect/pl/{post id}` from the root event's `mm` tag, so ingestion needs neither the bridge's tables nor the team name (D37). A thread whose root is an agent message has no link. |
 | `event_ids` | All events included, for deletion handling |
 
-Re-render and upsert the thread document when a message is added, edited or deleted. Debounce per thread (for example 30 seconds) so active threads are not re-indexed on every message. Very long threads are split into overlapping chunks with ids `thread:...:{n}`.
+Re-render and upsert the thread document when a message is added, edited or deleted. Debounce per thread (for example 30 seconds) so active threads are not re-indexed on every message. Very long threads are split into overlapping chunks with ids `thread:...:{n}`. As built: `INGEST_DEBOUNCE_SECONDS` (30) counts from a thread's first change, so a busy thread is still indexed within the window; `INGEST_CHUNK_CHARS` (6000) caps a chunk, chunks overlap by one message, and the root comes first, then replies by `mm_ts` in milliseconds (created_at has whole seconds only).
 
 ### B.3 Access control
 
@@ -133,12 +136,13 @@ Re-render and upsert the thread document when a message is added, edited or dele
 - At query time the brain resolves who may see the document from current channel membership and visibility.
 - Open-channel content is visible to everyone in the workspace; private-channel content only to current members.
 - If the brain cannot enforce this yet, ingest open channels only and leave private channels for later. Record that choice in `docs/decisions.md`.
+- As built (D35): a search made in channel X returns documents from X itself and from active open channels, never from another private channel, because an agent's answer is visible to everyone in X. Ingestion keeps each channel's name, visibility and active state in the brain (`upsertChannels`) from kind 39000 and the reader's membership, so a channel made private leaves other channels' results within about a second.
 
 ### B.4 Deletion and retention
 
 - A deletion event removes the message from its thread document; if the thread becomes empty, delete the document.
 - When a channel is paused or archived, follow the retention choice in Q4 of `docs/decisions.md`: keep its documents, stop updating them, exclude them from retrieval. The bridge removes the reader key from such channels (D28), so the reader's 44101 notification is the signal.
-- Keep a way to purge everything from one channel or one author on request.
+- Keep a way to purge everything from one channel or one author on request. As built: `pnpm ingest:purge --channel <relay channel id>` or `--author <pubkey>` deletes the documents and records an exclusion, so the content is never indexed again; an author's threads are re-indexed without them.
 
 ### B.5 Tests that must exist
 
@@ -147,3 +151,5 @@ Re-render and upsert the thread document when a message is added, edited or dele
 3. Deleting a message removes its text; deleting the last message removes the document.
 4. Restarting ingestion neither loses nor duplicates documents.
 5. A search made in the context of channel X never returns content from private channel Y.
+
+All five are in `e2e/ingestion.e2e.test.ts`, with the purges and an agent answer that cites an earlier thread.

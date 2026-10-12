@@ -5,6 +5,7 @@ import { AnthropicProvider } from './llm/anthropic.ts';
 import { EchoProvider } from './llm/echo.ts';
 import { systemPrompt, userMessage } from './llm/prompt.ts';
 import type { AgentRecord } from './registry.ts';
+import { knowledgeQuery } from './runtime.ts';
 import { evaluateTriggers, mentionsExplicitly } from './triggers.ts';
 
 const person = new SecretKeySigner(generateSecretKeyBytes());
@@ -111,6 +112,23 @@ describe('EchoProvider', () => {
   it('echoes the last turn', async () => {
     const result = await new EchoProvider().generate({ model: 'echo', instructions: '', conversation: [{ author: 'a', role: 'person', time: 't', text: 'ping' }], knowledge: [], tools: [] });
     expect(result.text).toBe('echo: ping');
+  });
+
+  it('lists the knowledge it was given with source links', async () => {
+    const result = await new EchoProvider().generate({
+      model: 'echo',
+      instructions: '',
+      conversation: [{ author: 'a', role: 'person', time: 't', text: 'when?' }],
+      knowledge: [{ id: 'd1', text: 'Alice: on   Fridays', sourceUrl: 'http://mm/_redirect/pl/p1' }],
+      tools: [],
+    });
+    expect(result.text).toBe('echo: when?\n\nFrom earlier threads:\n- Alice: on Fridays (http://mm/_redirect/pl/p1)');
+  });
+});
+
+describe('knowledgeQuery', () => {
+  it('drops @mentions, which name agents rather than topics', () => {
+    expect(knowledgeQuery('@finance-bot when is the  budget review? cc @alice.b')).toBe('when is the budget review? cc');
   });
 });
 

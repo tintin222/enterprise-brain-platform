@@ -205,6 +205,9 @@ importers:
       '@brain/bridge':
         specifier: workspace:*
         version: link:../packages/bridge
+      '@brain/ingestion':
+        specifier: workspace:*
+        version: link:../packages/ingestion
       '@brain/scripts':
         specifier: workspace:*
         version: link:../scripts
@@ -233,7 +236,14 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/ingestion: {}
+  packages/ingestion:
+    dependencies:
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/shared:
     dependencies:

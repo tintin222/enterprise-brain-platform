@@ -10,6 +10,7 @@
     "@brain/scripts": "workspace:*",
     "@brain/shared": "workspace:*",
     "@brain/bridge": "workspace:*",
-    "@brain/agent-runtime": "workspace:*"
+    "@brain/agent-runtime": "workspace:*",
+    "@brain/ingestion": "workspace:*"
   }
 }

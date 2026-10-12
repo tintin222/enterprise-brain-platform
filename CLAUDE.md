@@ -76,6 +76,8 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm agent-runtime` | Run the agent runtime (dispatcher and job runner). Agents with model `echo` answer without a model; others need `ANTHROPIC_API_KEY`. |
 | `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
 | `pnpm agent:echo [--handle echo]` | Run the echo agent, which answers mentions with "echo: ..." (no model) |
+| `pnpm ingestion` | Run ingestion, which keeps the local brain (D34) in step with the relay; agents search it |
+| `pnpm ingest:purge --channel <relay channel id> \| --author <pubkey>` | Remove a channel's or an author's content from the brain and keep it out |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` creates about 250 Mattermost users, so it runs only when named. |
 | `pnpm gen:emoji` | Regenerate the bridge's reaction emoji table from the pinned emoji-datasource (D31) |
 | `pnpm typecheck` / `pnpm lint` | Static checks |

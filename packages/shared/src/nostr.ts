@@ -103,10 +103,23 @@ export function threadRoot(event: Pick<NostrEvent, 'tags'>): string | undefined 
   return event.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? replyTarget(event);
 }
 
-/** When a message was written: the Mattermost time in `mm_ts` (ms) when present (spike A5), else created_at. */
-export function messageTimeSeconds(event: Pick<NostrEvent, 'tags' | 'created_at'>): number {
+/** When a message was written, in ms: the Mattermost time in `mm_ts` when present (spike A5), else created_at. */
+export function messageTimeMs(event: Pick<NostrEvent, 'tags' | 'created_at'>): number {
   const mmTs = Number(tagValue(event, 'mm_ts'));
-  return Number.isFinite(mmTs) && mmTs > 0 ? Math.floor(mmTs / 1000) : event.created_at;
+  return Number.isFinite(mmTs) && mmTs > 0 ? mmTs : event.created_at * 1000;
+}
+
+/** When a message was written, in seconds (see messageTimeMs). */
+export function messageTimeSeconds(event: Pick<NostrEvent, 'tags' | 'created_at'>): number {
+  return Math.floor(messageTimeMs(event) / 1000);
+}
+
+/**
+ * A thread's messages in reading order: the root first, then by message time in ms (created_at has only
+ * second precision, and a quick reply often shares its root's second), then id.
+ */
+export function threadOrder<T extends Pick<NostrEvent, 'id' | 'tags' | 'created_at'>>(messages: T[], rootId?: string): T[] {
+  return [...messages].sort((a, b) => Number(b.id === rootId) - Number(a.id === rootId) || messageTimeMs(a) - messageTimeMs(b) || a.id.localeCompare(b.id));
 }
 
 /** History mirrored by the bridge (backfill or old thread roots); agents never answer it. */

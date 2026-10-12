@@ -22,6 +22,8 @@
     "agent-runtime": "tsx packages/agent-runtime/src/main.ts",
     "agent:provision": "tsx packages/agent-runtime/src/cli/provision.ts",
     "agent:echo": "tsx packages/agent-runtime/src/cli/echo.ts",
+    "ingestion": "tsx packages/ingestion/src/main.ts",
+    "ingest:purge": "tsx packages/ingestion/src/cli/purge.ts",
     "spike": "tsx scripts/spike/run.ts",
     "gen:emoji": "tsx scripts/gen/emoji.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r --parallel run typecheck",

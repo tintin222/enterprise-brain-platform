@@ -41,7 +41,7 @@ Non-goals for v1: direct messages with agents, voice, federation with outside No
 | bridge | this repo | Mirrors agent-enabled Mattermost channels into the relay, and agent-authored relay events back into Mattermost. |
 | agent-runtime | this repo | Watches the relay for mentions of registered agents, builds context, calls the model, publishes the reply as the agent. |
 | ingestion | this repo | Reads the relay log and keeps the brain's index in step, including edits and deletions. |
-| enterprise brain | existing product | Knowledge store and retrieval. Reached through a `BrainClient` adapter. |
+| enterprise brain | existing product | Knowledge store and retrieval. Reached through a `BrainClient` adapter. Until it has an API, a local stand-in in our state database takes its place (D34). |
 
 ## 3. Sources of truth
 
@@ -94,7 +94,7 @@ Ingestion reads the same relay log with its own cursor, groups events into threa
 - **The relay is internal.** It is not exposed to the internet. Relay membership is required (`BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`) and only our service, agent and custodial keys are members.
 - **Relay authentication settings.** `BUZZ_REQUIRE_AUTH_TOKEN=true` in every environment. Without it the relay's HTTP API accepts an unauthenticated `X-Pubkey` header and acts as that key: Phase 0 read a private channel that way (spike X1). Removing a relay member refuses new connections but does not close sockets that are already open (spike A6).
 - **Custodial keys are high-value secrets.** Encrypted at rest with a master key from the environment or a KMS, decrypted only in memory, never logged.
-- **Access control follows the channel.** Content ingested from a private channel may only be retrieved for people or agents who are members of that channel at query time. Never snapshot membership into the index.
+- **Access control follows the channel.** Content ingested from a private channel may only be retrieved for people or agents who are members of that channel at query time. Never snapshot membership into the index. Because an agent answers in a channel everyone there can read, a search made in a channel returns that channel's content and open channels' content only (D35).
 - **Agents act only where they are members.** The dispatcher checks membership before running an agent; the relay enforces it again on write for private channels.
 - **Prompt injection.** Chat content is untrusted. It is passed to the model as quoted conversation, never as system instructions. Tool permissions come from the agent definition only.
 - **Loop control.** Agents do not trigger on messages authored by agents unless explicitly mentioned, and replies per thread per agent are capped.

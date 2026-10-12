@@ -1,43 +1,7 @@
-// Context assembly (docs/agents-and-ingestion.md, A.4): the thread up to the triggering message, channel
-// background, and names, read from the relay with the reader key.
-import { applyEdits, messageTimeSeconds, tagValue, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
+// Context assembly (docs/agents-and-ingestion.md, A.4): the thread up to the triggering message and channel
+// background, read from the relay with the reader key. Names come from ProfileNames in @brain/shared.
+import { applyEdits, messageTimeSeconds, tagValue, threadOrder, type NostrEvent, type RelayClient, type Signer } from '@brain/shared';
 import type { ConversationTurn } from './llm/types.ts';
-
-const PROFILE_TTL_MS = 10 * 60 * 1000;
-
-/** Display names from kind 0 profiles, cached. */
-export class ProfileNames {
-  readonly #relay: RelayClient;
-  readonly #reader: Signer;
-  readonly #cache = new Map<string, { name: string; expires: number }>();
-
-  constructor(relay: RelayClient, reader: Signer) {
-    this.#relay = relay;
-    this.#reader = reader;
-  }
-
-  async names(pubkeys: string[]): Promise<Map<string, string>> {
-    const now = Date.now();
-    const missing = [...new Set(pubkeys)].filter((pubkey) => (this.#cache.get(pubkey)?.expires ?? 0) < now);
-    if (missing.length > 0) {
-      const profiles = await this.#relay.query([{ kinds: [0], authors: missing }], this.#reader);
-      for (const pubkey of missing) {
-        const profile = profiles.find((event) => event.pubkey === pubkey);
-        let name = 'someone';
-        if (profile) {
-          try {
-            const content = JSON.parse(profile.content) as { display_name?: string; name?: string };
-            name = content.display_name || content.name || name;
-          } catch {
-            // keep the fallback
-          }
-        }
-        this.#cache.set(pubkey, { name, expires: now + PROFILE_TTL_MS });
-      }
-    }
-    return new Map(pubkeys.map((pubkey) => [pubkey, this.#cache.get(pubkey)?.name ?? 'someone']));
-  }
-}
 
 export interface ChannelInfo {
   name: string;
@@ -58,7 +22,7 @@ export async function threadEvents(relay: RelayClient, reader: Signer, channelId
   const found = await relay.query([{ ids: [rootId] }, { kinds: [9], '#h': [channelId], '#e': [rootId], limit: 500 }], reader);
   const byId = new Map(found.filter((event) => event.kind === 9).map((event) => [event.id, event]));
   byId.delete(trigger.id);
-  const thread = [...byId.values()].filter((event) => event.created_at <= trigger.created_at).sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+  const thread = threadOrder([...byId.values()].filter((event) => event.created_at <= trigger.created_at), rootId);
   thread.push(trigger);
   if (thread.length < 3) {
     const root = thread[0] ?? trigger;
