@@ -631,7 +631,12 @@ export class BrainStore {
   // --- search ---
 
   search(params: SearchParams): Promise<SearchResult[]> {
-    return hybridSearch(this.pool, params);
+    // pgvector returns at most ef_search rows from a plain HNSW scan and stops at dead or filtered-out rows, so the
+    // vector half scans iteratively until it has its candidates (D62).
+    return withTransaction(this.pool, async (client) => {
+      await client.query('SET LOCAL hnsw.iterative_scan = relaxed_order; SET LOCAL hnsw.ef_search = 100');
+      return hybridSearch(client, params);
+    });
   }
 
   // --- audit and events ---

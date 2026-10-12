@@ -36,7 +36,7 @@ Metrics worth alerting on:
 
 Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted; the brain API logs one line per request without the query string. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4); with `ENV_FILE=.env.staging` and `--env-only` it checks staging's logs against staging's secrets (docs/staging.md). `pnpm check:secrets [paths]` scans the repository (or the given files) for key shapes, secret assignments and known values; CI runs it on every push (`.secretsignore` lists deliberate false positives).
 
-The brain API also answers `GET /openapi.json` (the document behind `docs/brain/API.md`), and `pnpm brain:bench` measures search latency on synthetic data (NFR-1; `docs/brain/gates/phase-0.md`).
+The brain API also answers `GET /openapi.json` (the document behind `docs/brain/API.md`), and `pnpm brain:bench` measures search latency on synthetic data (NFR-1; `docs/brain/gates/phase-0.md`). After a large deletion of chunks (`pnpm ingest:purge` of a busy channel, `pnpm brain:bench --clean`), the vector index keeps the deleted rows until autovacuum runs and keeps its size until `REINDEX INDEX brain.chunks_embedding`; searches stay correct meanwhile because the vector half scans iteratively (D62), only slower.
 
 ## 2. Write throttling
 

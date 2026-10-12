@@ -22,6 +22,8 @@ The gate run earned its keep: the first four attempts failed and each failure wa
 3. Inside the Compose network the services called Mattermost at the public address (`localhost:8065`, which is the container itself). `MM_API_URL` now carries the address services call, `MM_URL` stays the public one (D58); staging uses the private hostname the same way.
 4. A `POST` without a body but with a JSON content type was refused (`/setup/mattermost`); the API now accepts it and the clients send none.
 
+A seventh defect came out of the bench's leftovers: after 250 k synthetic chunks were deleted, the vector half of every search returned nothing (the HNSW scan's first candidates were all dead rows), which the gate e2e test caught on this machine. The plan had called for pgvector's iterative scan and the code had not set it; every search now sets it, with `ef_search` raised to the 60 candidates we ask for (D62). A selective access scope would have starved the vector half the same way.
+
 A fifth defect was found by `pnpm check:secrets` during the run: `install/config.env` was not git-ignored. It is now, and in `.dockerignore`. Nothing had been committed. A sixth came from CI: on Docker Engine for Linux, Mattermost could not resolve `host.docker.internal`, the address the dev stack's brain API is called back at, so the slash-command and dialog e2e tests failed on the runner (they pass on Colima and Docker Desktop, which define the name). The Mattermost service now defines it through `extra_hosts`; the CI step also hid the failing suite behind a `tee` without `pipefail`, which is fixed too.
 
 ## 2. Searchable within 5 s (the spec's second criterion)

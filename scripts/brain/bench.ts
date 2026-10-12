@@ -54,7 +54,10 @@ try {
       await pool.query('DELETE FROM brain.entity_versions WHERE entity_id IN (SELECT id FROM brain.entities WHERE container_id = $1)', [bench.id]);
       await pool.query('DELETE FROM brain.entities WHERE container_id = $1', [bench.id]);
       await pool.query('DELETE FROM brain.containers WHERE id = $1', [bench.id]);
-      console.log('Removed the bench data.');
+      // Deleted rows stay in the HNSW graph until a vacuum, and the index keeps its size until rebuilt.
+      await pool.query('VACUUM brain.chunks');
+      await pool.query('REINDEX INDEX brain.chunks_embedding');
+      console.log('Removed the bench data and rebuilt the vector index.');
     }
     process.exit(0);
   }
