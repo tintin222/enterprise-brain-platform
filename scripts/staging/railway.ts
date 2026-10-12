@@ -6,7 +6,7 @@
 //   services    create services, volumes and Mattermost's domain; apply settings and variables
 //   data        deploy the three databases, Redis and the S3 store
 //   relay       deploy the relay
-//   mattermost  deploy Mattermost (Mostlymatter)
+//   mattermost  deploy Mattermost (our own build, Enterprise Brain chat; D48)
 //   seed        run pnpm dev:seed against the public address and check that nobody else holds an account
 //   app         store the seed's tokens and deploy the bridge, agent-runtime, ingestion and admin API
 import { spawn } from 'node:child_process';
@@ -115,7 +115,7 @@ const RELAY: ServiceSpec = {
 // Railway mounts volumes as root and the image's own user cannot write to them.
 const MATTERMOST: ServiceSpec = {
   name: 'mattermost',
-  dir: 'infra/mostlymatter',
+  dir: 'infra/chat',
   volume: '/mattermost/data',
   healthcheck: { path: '/api/v4/system/ping', port: 8065 },
   variables: (env) => {
@@ -225,7 +225,7 @@ function serviceId(ctx: Context, name: string): string {
 // --- Steps ---
 
 const STAGING_VALUES: EnvValues = {
-  MATTERMOST_EDITION: 'mostlymatter',
+  MATTERMOST_EDITION: 'enterprise-brain',
   RELAY_WS_URL: `ws://${internal('relay', 3000)}`,
   RELAY_HTTP_URL: `http://${internal('relay', 3000)}`,
   STATE_DB_HOST: 'state-postgres.railway.internal',

@@ -1,0 +1,9 @@
+# Override: run Enterprise Brain chat, our own Mattermost build (no user cap, our name and logo; D48), instead of
+# Team Edition, on the same data. Selected with `pnpm dev:up --enterprise-brain` (MATTERMOST_EDITION in .env).
+services:
+  mattermost:
+    image: enterprise-brain/chat:11.7.12-eb1
+    build:
+      context: ./chat
+      platforms: [linux/amd64]
+    pull_policy: build

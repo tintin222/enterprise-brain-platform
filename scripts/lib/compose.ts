@@ -6,12 +6,16 @@ import { envPath, readEnvFile, repoRoot } from './env.ts';
 
 export const composeProject = 'enterprise-brain';
 const composeFile = path.join(repoRoot, 'infra', 'compose.yml');
-/** Mostlymatter instead of Team Edition, when .env says MATTERMOST_EDITION=mostlymatter (D11, D22). */
-const mostlymatterFile = path.join(repoRoot, 'infra', 'compose.mostlymatter.yml');
+/** Another Mattermost build instead of Team Edition, by MATTERMOST_EDITION in .env (D11, D22, D48). */
+const editionFiles: Record<string, string> = {
+  mostlymatter: path.join(repoRoot, 'infra', 'compose.mostlymatter.yml'),
+  'enterprise-brain': path.join(repoRoot, 'infra', 'compose.chat.yml'),
+};
 
 function baseArgs(): string[] {
   const args = ['compose', '--project-name', composeProject, '--file', composeFile];
-  if (readEnvFile().MATTERMOST_EDITION === 'mostlymatter') args.push('--file', mostlymatterFile);
+  const editionFile = editionFiles[readEnvFile().MATTERMOST_EDITION ?? 'team'];
+  if (editionFile) args.push('--file', editionFile);
   if (existsSync(envPath)) args.push('--env-file', envPath);
   return args;
 }

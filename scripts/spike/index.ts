@@ -16,5 +16,6 @@ import { acceptanceRelay } from './acceptance-relay.ts';
 import type { Spike } from './lib/spike.ts';
 import { x01 } from './x01-xpubkey.ts';
 import { x02 } from './x02-user-limit.ts';
+import { x03 } from './x03-no-user-limit.ts';
 
-export const spikes: Spike[] = [acceptanceRelay, acceptanceMm, a01, a02, a03, a04, a05, a06, a07, a08, a09, a10, a11, a12, x01, x02];
+export const spikes: Spike[] = [acceptanceRelay, acceptanceMm, a01, a02, a03, a04, a05, a06, a07, a08, a09, a10, a11, a12, x01, x02, x03];

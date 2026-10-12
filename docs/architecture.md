@@ -108,7 +108,7 @@ Ingestion reads the same relay log with its own cursor, groups events into threa
 | | Mattermost | Buzz relay |
 | --- | --- | --- |
 | Local dev | Official Team Edition container 11.7.12, pinned by digest (`infra/compose.yml`); Mostlymatter of the same version with `pnpm dev:up --mostlymatter` (D40) | Relay 0.2.1 (`relay-v0.2.1`, D12), services adapted from Buzz's `deploy/compose/` bundle |
-| Staging / production | Mostlymatter build of the same version first; our own branded thin fork later (Phase 7) | Upstream production compose bundle (`deploy/compose/` in the Buzz repo), pinned release |
+| Staging / production | Our own build of the same version (Enterprise Brain chat, D48); Mostlymatter remains an option | Upstream production compose bundle (`deploy/compose/` in the Buzz repo), pinned release |
 
 Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103 and the admin API 9110, all bound to 127.0.0.1.
 

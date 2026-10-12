@@ -94,6 +94,16 @@ The drill runs as an e2e test: `E2E_RELAY_DRILL=1 pnpm test:e2e relay-rebuild`. 
 
 ## 6. Mattermost build
 
+Three builds of Mattermost 11.7.12 run on the same data, chosen with `pnpm dev:up --team-edition`, `--mostlymatter` or `--enterprise-brain` and stored as `MATTERMOST_EDITION` in `.env`:
+
+| Edition | Image | User limit | Branding |
+| --- | --- | --- | --- |
+| `team` (default) | The pinned Team Edition image | 250 | Mattermost |
+| `mostlymatter` | `infra/mostlymatter/Dockerfile` (Framasoft's binary, D40) | None | Mattermost |
+| `enterprise-brain` | `infra/chat/Dockerfile` (our fork's release, D48); staging runs it | None | Enterprise Brain |
+
+**Upgrading our fork.** In `tintin222/enterprise-brain-chat`, create a branch from the new upstream tag and carry over the commits of `enterprise-brain/<current version>` (the limits change, the branding and the release workflow). Run the "Enterprise Brain release" workflow with a new release name; it runs the user-limit tests, builds the server and the web app, and publishes them with `SHA512SUMS`. Put the release name and the three sums into `infra/chat/Dockerfile`, then run `pnpm dev:up --enterprise-brain`, `pnpm spike`, `pnpm spike X3` and `pnpm test:e2e` before `pnpm staging:railway mattermost`.
+
 Development uses Team Edition 11.7.12. `pnpm dev:up --mostlymatter` switches the same stack and data to Mostlymatter 11.7.12, which has no 250-user cap (D11, D22, Q14); `pnpm dev:up --team-edition` switches back. The choice is stored as `MATTERMOST_EDITION` in `.env`. The image is built from `infra/mostlymatter/Dockerfile`: the pinned Team Edition image with Framasoft's Mostlymatter binary, pinned by SHA-512 and checked once against Framasoft's minisign signature. Building it needs the Docker buildx plugin (`brew install docker-buildx`).
 
 ## 7. Load test

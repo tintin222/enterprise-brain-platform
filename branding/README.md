@@ -22,4 +22,7 @@ Colours: blue `#2563EB`, violet `#7C3AED`, ink `#0F172A` (the name on light back
 
 Typeface: Inter by Rasmus Andersson, under the SIL Open Font License 1.1. The source was the variable font `ofl/inter/Inter[opsz,wght].ttf` from the google/fonts repository (SHA-256 `29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031`), set at weight 600 and optical size 32 and shaped with HarfBuzz (kerning on). The outlines are artwork, not a font, so no font file ships with them.
 
-Where it is used now: `pnpm dev:seed` sets Mattermost's site name, the login-page image (`png/mark-512.png`) and its description (D44). Mattermost's own logo in the login header, its "Team Edition" badge and its footer remain until our fork replaces them (`docs/phase7.md`).
+Where it is used:
+
+- `pnpm dev:seed` sets Mattermost's site name, the login-page image (`png/mark-512.png`) and its description (D44).
+- Our own Mattermost build ([tintin222/enterprise-brain-chat](https://github.com/tintin222/enterprise-brain-chat), D48) carries the logo in its web app: login page and header (without an edition badge), browser and app icons, email logos and the About dialog. Its icon files were rendered from these SVG files at the sizes Mattermost uses, with the favicon's mention and unread dots added.

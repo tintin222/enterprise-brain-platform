@@ -58,6 +58,9 @@ await admin.put('/config/patch', {
     EnableCustomBrand: true,
     CustomDescriptionText: 'Team chat with AI agents that know your company',
   },
+  // Mattermost's own About, Help, Privacy and problem-report pages, hidden until the product has its own. Mattermost
+  // restores its Terms link when it is empty, so that one stays until it is set to the product's terms.
+  SupportSettings: { AboutLink: '', HelpLink: '', PrivacyPolicyLink: '', ReportAProblemLink: '' },
 });
 await admin.upload('/brand/image', 'image', readFileSync(path.join(repoRoot, 'branding/png/mark-512.png')), 'mark-512.png', 'image/png');
 console.log('Enabled bot accounts and user access tokens; allowed 10,000 members per team; applied the Enterprise Brain name and logo');

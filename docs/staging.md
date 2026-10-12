@@ -1,6 +1,6 @@
 # Staging on Railway
 
-Status: deployed on 2026-10-12 in the owner's Railway workspace (Pro plan), project `enterprise-brain-staging`, region EU West (Amsterdam). Mattermost is at https://mattermost-production-6741.up.railway.app. The Railway facts below were checked against Railway's documentation, pricing page and CLI on 2026-10-12, and while deploying (spike findings item 33).
+Status: deployed on 2026-10-12 in the owner's Railway workspace (Pro plan), project `enterprise-brain-staging`, region EU West (Amsterdam). Mattermost, our own build (D48), is at https://mattermost-production-6741.up.railway.app. The Railway facts below were checked against Railway's documentation, pricing page and CLI on 2026-10-12, and while deploying (spike findings item 33).
 
 Sign-in: `sysadmin` (system admin), `alice` and `bob`, in team Enterprise Brain. Their passwords are `MM_ADMIN_PASSWORD` and `MM_PERSON_PASSWORD` in `.env.staging` on the machine that created staging. Mattermost cannot send email yet (no SMTP server configured), so add people from the System Console or with the team's invite link.
 
@@ -10,7 +10,7 @@ Every service sits on the project's private network; only Mattermost has a publi
 
 | Railway service | Built from | Volume | Reachable from |
 | --- | --- | --- | --- |
-| `mattermost` | `infra/mostlymatter/Dockerfile` (Mostlymatter 11.7.12, D40) | `/mattermost/data` | Public HTTPS domain |
+| `mattermost` | `infra/chat/Dockerfile` (our own build, Enterprise Brain chat 11.7.12, D48) | `/mattermost/data` | Public HTTPS domain |
 | `mm-postgres`, `buzz-postgres`, `state-postgres` | `infra/staging/postgres` (the Postgres image pinned in `infra/compose.yml`) | Database files | Private network |
 | `buzz-redis` | `infra/staging/redis` | `/data` | Private network |
 | `buzz-s3` | `infra/staging/s3` (also creates the relay's bucket) | `/data` | Private network |
@@ -53,6 +53,7 @@ The repository must be linked to the project (`railway link --project enterprise
 - An echo agent created with the admin API answered a mention from alice, posted through the public address, in 1.2 s. A second agent, created and mentioned at once, also answered in 1.2 s (D47).
 - No warnings or errors from our services. The relay refused the reader key for a moment on its very first start, until the bridge granted the membership; Mattermost warned about email (no SMTP) and Calls (no public IP).
 - `pnpm check:logs --env-only` found none of the 15 staging secrets in the runtime and build logs of all eleven services (22 files, 399 KiB). Key store secrets were not checked, because the state database is private.
+- Later the same day Mattermost was switched from Mostlymatter to our own build (D48) on the same data: it reports build `eb-v11.7.12-1` and no user limit, the sign-in page carries only the Enterprise Brain name and logo, the echo agent still answered in 1.2 s, and the logs again held no staging secret.
 
 ## Limits to know
 
