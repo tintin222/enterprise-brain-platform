@@ -9,6 +9,9 @@ const ENTITY_TYPES = ['person', 'system', 'requirement', 'document', 'credential
 const CONTAINER_KINDS = ['project', 'topic', 'general'];
 const CONTAINER_STATUSES = ['active', 'archived'];
 const MATCHES = ['keyword', 'semantic'];
+const PERSON_FIELDS = ['role', 'organisation', 'workingHours', 'preferredChannel', 'expertise', 'responsibilities'];
+const CONTAINER_ROLES = ['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member'];
+const WHY = ['profile', 'evidence'];
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -33,7 +36,7 @@ describe('string catalog', () => {
   it('has every id built from a prefix and an enumeration value', () => {
     const prefixes = new Set<string>();
     for (const match of text.matchAll(/id(?:=\{|: )`([a-zA-Z0-9_.]+)\.\$\{/g)) prefixes.add(match[1]!);
-    const values: Record<string, string[]> = { type: ENTITY_TYPES, 'containers.kind': CONTAINER_KINDS, 'containers.status': CONTAINER_STATUSES, 'search.matched': MATCHES };
+    const values: Record<string, string[]> = { type: ENTITY_TYPES, 'containers.kind': CONTAINER_KINDS, 'containers.status': CONTAINER_STATUSES, 'search.matched': MATCHES, person: PERSON_FIELDS, role: CONTAINER_ROLES, 'search.why': WHY };
     for (const prefix of prefixes) {
       expect(values, `no enumeration known for the prefix "${prefix}"`).toHaveProperty(prefix);
       for (const value of values[prefix] ?? []) expect(catalog, `${prefix}.${value}`).toHaveProperty(`${prefix}.${value}`);

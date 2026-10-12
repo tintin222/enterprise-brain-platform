@@ -12,7 +12,9 @@ export function SearchPage() {
   const type = params.get('type') ?? '';
   const container = params.get('container') ?? '';
   const containers = useAsync(() => brain.containers({}), []);
-  const search = useAsync(() => (q ? brain.search({ q, ...(type ? { type } : {}), ...(container ? { container } : {}) }) : Promise.resolve(undefined)), [q, type, container]);
+  const view = params.get('view') ?? 'results';
+  const search = useAsync(() => (q && view === 'results' ? brain.search({ q, ...(type ? { type } : {}), ...(container ? { container } : {}) }) : Promise.resolve(undefined)), [q, type, container, view]);
+  const who = useAsync(() => (q && view === 'people' ? brain.whoKnows(q) : Promise.resolve(undefined)), [q, view]);
   const titles = new Map(containers.data?.containers.map((item) => [item.id, item.title]) ?? []);
   const set = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -25,7 +27,44 @@ export function SearchPage() {
       <h1>
         <FormattedMessage id="search.title" />
       </h1>
-      <form className="inline card" onSubmit={(event) => event.preventDefault()}>
+      <p className="tabs">
+        <button type="button" className={view === 'results' ? '' : 'secondary'} onClick={() => set('view', '')}>
+          <FormattedMessage id="search.tab.results" />
+        </button>
+        <button type="button" className={view === 'people' ? '' : 'secondary'} onClick={() => set('view', 'people')}>
+          <FormattedMessage id="search.tab.people" />
+        </button>
+      </p>
+      {view === 'people' && (
+        <>
+          <ErrorLine error={who.error} />
+          {who.data && (
+            <>
+              <p className="muted">
+                <FormattedMessage id="search.whoKnows" values={{ count: who.data.people.length, query: q }} />
+              </p>
+              <ul className="plain">
+                {who.data.people.map((hit) => (
+                  <li key={hit.person.id} className="card">
+                    <Link to={`/people/${hit.person.id}`}>
+                      <strong>{hit.person.title}</strong>
+                    </Link>
+                    {typeof hit.person.data.role === 'string' && hit.person.data.role && <span className="muted"> · {hit.person.data.role}</span>}
+                    <ul className="plain">
+                      {hit.evidence.map((item) => (
+                        <li key={item.entityId} className="muted">
+                          <FormattedMessage id={`search.why.${item.why.split(' ')[0] === 'profile' ? 'profile' : 'evidence'}`} values={{ why: item.why }} /> <Link to={`/entities/${item.entityId}`}>{item.title}</Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+      <form className="inline card" onSubmit={(event) => event.preventDefault()} hidden={view === 'people'}>
         <label>
           <FormattedMessage id="search.filter.type" />
           <select value={type} onChange={(event) => set('type', event.target.value)}>

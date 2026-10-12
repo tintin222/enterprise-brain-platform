@@ -1,7 +1,7 @@
 // The pages' client for the brain API: same-origin fetch with the header Mattermost-style CSRF needs, JSON in
 // and out, and a sign-in redirect on 401.
 export interface Me {
-  principal: { kind: string; userId: string; username?: string; isAdmin?: boolean };
+  principal: { kind: string; userId: string; username?: string; isAdmin?: boolean; personId?: string };
   features: Record<string, boolean>;
   publicUrl: string;
   chatUrl: string;
@@ -98,6 +98,24 @@ export interface SearchResult {
   url: string;
 }
 
+export interface Member {
+  person: EntitySummary;
+  role: string;
+  linkId: number;
+}
+
+export interface WhoKnows {
+  person: EntitySummary;
+  score: number;
+  evidence: { entityId: string; title: string; type: string; why: string; url: string }[];
+}
+
+export interface PersonDetail {
+  person: Entity;
+  memberships: { containerId: string; role: string; title: string; kind: string }[];
+  suggestions: { kind: string; value: string; by: string; at: string; reason?: string }[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -144,6 +162,16 @@ export const brain = {
   links: (id: string) => api<{ outgoing: Link[]; incoming: Link[] }>(`/entities/${encodeURIComponent(id)}/links`),
   backlinks: (id: string) => api<{ links: Link[]; mentions: SearchResult[] }>(`/entities/${encodeURIComponent(id)}/backlinks`),
   search: (params: Record<string, string>) => api<{ results: SearchResult[]; semantic: boolean; tookMs: number }>(`/search?${new URLSearchParams(params)}`),
+  // People (FR-2)
+  people: (params: Record<string, string> = {}) => api<{ people: EntitySummary[] }>(`/people?${new URLSearchParams(params)}`),
+  person: (id: string) => api<PersonDetail>(`/people/${encodeURIComponent(id)}`),
+  createExternalContact: (body: { name: string; emails?: string[]; organisation?: string; role?: string; notes?: string }) => api<{ person: Entity }>('/people', { method: 'POST', body: JSON.stringify(body) }),
+  updateProfile: (id: string, body: Record<string, unknown>) => api<{ person: Entity }>(`/people/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  decideSuggestion: (id: string, n: number, decision: 'confirm' | 'dismiss') => api<{ person: Entity }>(`/people/${encodeURIComponent(id)}/suggestions/${n}/${decision}`, { method: 'POST' }),
+  whoKnows: (q: string) => api<{ people: WhoKnows[]; semantic: boolean }>(`/people/search?q=${encodeURIComponent(q)}`),
+  members: (containerId: string) => api<{ members: Member[] }>(`/containers/${encodeURIComponent(containerId)}/members`),
+  addMember: (containerId: string, body: { personId: string; role: string }) => api<{ link: Link }>(`/containers/${encodeURIComponent(containerId)}/members`, { method: 'POST', body: JSON.stringify(body) }),
+  removeMember: (containerId: string, personId: string) => api<{ removed: boolean }>(`/containers/${encodeURIComponent(containerId)}/members/${encodeURIComponent(personId)}`, { method: 'DELETE' }),
 };
 
 export async function signOut(): Promise<void> {

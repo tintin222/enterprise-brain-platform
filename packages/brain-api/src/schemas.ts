@@ -154,6 +154,30 @@ export const searchQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
 });
 
+// --- people (FR-2) ---
+
+export const containerRole = z.enum(['sponsor', 'product_owner', 'end_user', 'developer', 'fde', 'reviewer', 'member']);
+const tags = z.array(z.string().trim().min(1).max(80)).max(50);
+export const profilePatchIn = z.object({
+  role: z.string().trim().max(120).optional(),
+  organisation: z.string().trim().max(200).optional(),
+  expertise: tags.optional(),
+  responsibilities: tags.optional(),
+  workingHours: z.string().trim().max(200).optional(),
+  preferredChannel: z.string().trim().max(120).optional(),
+  managerId: id.nullable().optional(),
+});
+export const externalContactIn = z.object({
+  name: z.string().trim().min(1).max(200),
+  emails: z.array(z.email()).max(10).optional(),
+  organisation: z.string().trim().max(200).optional(),
+  role: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(5000).optional(),
+});
+export const memberIn = z.object({ personId: id, role: containerRole.default('member') });
+export const memberOut = z.object({ person: entitySummaryOut, role: z.string(), linkId: z.number() });
+export const whoKnowsOut = z.object({ person: entitySummaryOut, score: z.number(), evidence: z.array(z.object({ entityId: z.string(), title: z.string(), type: z.string(), why: z.string(), url: z.string() })) });
+
 export const createAgentIn = z.object({
   handle: z.string().regex(/^[a-z][a-z0-9._-]{2,21}$/, '3-22 characters: lowercase letters, digits, ".", "-", "_"'),
   name: z.string().trim().min(1).max(64),

@@ -7,6 +7,7 @@ export interface MmUser {
   last_name?: string;
   nickname?: string;
   email?: string;
+  position?: string;
   roles: string;
   is_bot?: boolean;
   delete_at: number;

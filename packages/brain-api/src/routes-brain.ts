@@ -31,18 +31,31 @@ export function registerBrainRoutes(app: FastifyInstance, deps: BrainApiDeps, li
 
   // --- session ---
 
-  api.get('/me', { schema: { tags: ['Session'], summary: 'The caller and the features on this installation', response: { 200: z.object({ principal: z.object({ kind: z.string(), userId: z.string(), username: z.string().optional(), isAdmin: z.boolean().optional() }), features: z.record(z.string(), z.boolean()), publicUrl: z.string(), chatUrl: z.string(), timezone: z.string() }), 401: s.errorResponse } } }, (request) => {
+  const features = () => ({
+    api: config.BRAIN_FEATURE_API,
+    chatCommands: config.BRAIN_FEATURE_CHAT_COMMANDS,
+    semanticSearch: semanticOn,
+    projects: config.BRAIN_FEATURE_PROJECTS,
+    people: config.BRAIN_FEATURE_PEOPLE,
+    systems: config.BRAIN_FEATURE_SYSTEMS,
+    documents: config.BRAIN_FEATURE_DOCUMENTS,
+    tasks: config.BRAIN_FEATURE_TASKS,
+    reminders: config.BRAIN_FEATURE_REMINDERS,
+    ocrModel: config.BRAIN_FEATURE_OCR_MODEL,
+  });
+
+  api.get('/me', { schema: { tags: ['Session'], summary: 'The caller and the features on this installation', response: { 200: z.object({ principal: z.object({ kind: z.string(), userId: z.string(), username: z.string().optional(), isAdmin: z.boolean().optional(), personId: z.string().optional() }), features: z.record(z.string(), z.boolean()), publicUrl: z.string(), chatUrl: z.string(), timezone: z.string() }), 401: s.errorResponse } } }, (request) => {
     const principal = requirePrincipal(request);
     return {
-      principal: principal.kind === 'person' ? { kind: 'person', userId: principal.userId, username: principal.username, isAdmin: principal.isAdmin } : { kind: principal.kind, userId: principal.userId },
-      features: { api: config.BRAIN_FEATURE_API, chatCommands: config.BRAIN_FEATURE_CHAT_COMMANDS, semanticSearch: semanticOn },
+      principal: principal.kind === 'person' ? { kind: 'person', userId: principal.userId, username: principal.username, isAdmin: principal.isAdmin, ...(principal.personId ? { personId: principal.personId } : {}) } : { kind: principal.kind, userId: principal.userId },
+      features: features(),
       publicUrl: urls.publicUrl,
       chatUrl: config.MM_URL,
       timezone: config.BRAIN_TIMEZONE,
     };
   });
 
-  api.get('/features', { schema: { tags: ['Session'], summary: 'Feature flags (no sign-in needed)', response: { 200: z.record(z.string(), z.boolean()) } } }, () => ({ api: config.BRAIN_FEATURE_API, chatCommands: config.BRAIN_FEATURE_CHAT_COMMANDS, semanticSearch: semanticOn }));
+  api.get('/features', { schema: { tags: ['Session'], summary: 'Feature flags (no sign-in needed)', response: { 200: z.record(z.string(), z.boolean()) } } }, () => features());
 
   // --- containers ---
 

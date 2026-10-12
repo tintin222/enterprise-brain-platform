@@ -75,7 +75,7 @@ export function registerAuth(app: FastifyInstance, deps: BrainApiDeps): void {
     if (!payload) return;
     try {
       const membership = await access.membership(payload.uid);
-      request.principal = { kind: 'person', userId: payload.uid, username: membership.username, isAdmin: membership.isAdmin };
+      request.principal = { kind: 'person', userId: payload.uid, username: membership.username, isAdmin: membership.isAdmin, ...(membership.personId ? { personId: membership.personId } : {}) };
       request.authKind = 'cookie';
     } catch {
       // A deactivated account keeps no session.

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { BrainStoreError, type BrainStore } from '@brain/brain';
+import { BrainStoreError, type BrainStore, type FileStore } from '@brain/brain';
 import type { EmbeddingProvider } from '@brain/models';
 import { errorFields, metricsRegistry, type ChatClient, type KeyStore, type Logger, type Pool, type RelayClient, type Signer } from '@brain/shared';
 import fastifyCookie from '@fastify/cookie';
@@ -16,8 +16,11 @@ import { AccessError, type AccessService } from './access.ts';
 import { registerAuth, requireAdmin } from './auth.ts';
 import { ChannelLinker } from './channels.ts';
 import type { BrainApiConfig } from './config.ts';
+import type { JobRunner } from './jobs.ts';
+import type { PeopleService } from './people.ts';
 import { registerBrainRoutes } from './routes-brain.ts';
 import { registerMattermostRoutes } from './routes-mm.ts';
+import { registerPeopleRoutes } from './routes-people.ts';
 import type { TokenSigner } from './sessions.ts';
 
 export interface BrainApiDeps {
@@ -35,6 +38,10 @@ export interface BrainApiDeps {
   bridgeSigner: Signer;
   access: AccessService;
   tokens: TokenSigner;
+  /** Phase 1: people, uploaded files and the recurring jobs. */
+  people: PeopleService;
+  files: FileStore;
+  jobs: JobRunner;
   botUserId: string;
   teamName: string;
   log: Logger;
@@ -101,6 +108,7 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
   const linker = new ChannelLinker({ store: deps.store, chat: deps.chat, access: deps.access, botUserId: deps.botUserId, publicUrl: config.BRAIN_PUBLIC_URL, log });
   await app.register((api, _options, done) => {
     registerBrainRoutes(api, deps, linker);
+    registerPeopleRoutes(api, deps);
     done();
   }, { prefix: API_PREFIX });
   registerMattermostRoutes(app, deps, linker);

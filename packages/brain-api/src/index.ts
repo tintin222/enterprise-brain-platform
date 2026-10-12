@@ -6,4 +6,8 @@ export { ChannelLinker } from './channels.ts';
 export { brainApiConfigSchema, type BrainApiConfig } from './config.ts';
 export { COMMAND_TRIGGER, ensureMattermostIntegration, SECRET_OAUTH_CLIENT, secretCommandToken, SETTING_COMMANDS, SETTING_OAUTH_CLIENT, type MattermostSetupDeps, type MattermostSetupResult } from './mattermost-setup.ts';
 export { TokenSigner, type SessionPayload } from './sessions.ts';
+export { startJobRunner, type JobRunner, type JobSpec } from './jobs.ts';
+export { CONTAINER_ROLES, displayNameOf, PeopleService, personKey, profileText, type ContainerRole, type WhoKnowsHit } from './people.ts';
+export { registerPhase1Jobs, type Phase1JobDeps } from './phase1-jobs.ts';
+export { dailyPeriod, everyMinutesPeriod, localParts } from './schedule.ts';
 export { startEmbeddingWorker, type EmbeddingWorker, type EmbeddingWorkerOptions } from './worker.ts';

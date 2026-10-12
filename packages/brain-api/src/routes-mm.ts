@@ -31,7 +31,7 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
 
   async function personFor(userId: string): Promise<Principal> {
     const membership = await access.membership(userId);
-    return { kind: 'person', userId, username: membership.username, isAdmin: membership.isAdmin };
+    return { kind: 'person', userId, username: membership.username, isAdmin: membership.isAdmin, ...(membership.personId ? { personId: membership.personId } : {}) };
   }
 
   const help = [

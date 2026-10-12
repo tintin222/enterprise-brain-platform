@@ -2,9 +2,10 @@
 // through ChatClient with the @brain token, cached briefly, never snapshotted into our tables.
 import { GENERAL_CONTAINER_ID, type BrainStore, type Entity, type Scope } from '@brain/brain';
 import { relayChannelIdFor, type ChatClient } from '@brain/shared';
+import type { PeopleService } from './people.ts';
 
 export type Principal =
-  | { kind: 'person'; userId: string; username: string; isAdmin: boolean }
+  | { kind: 'person'; userId: string; username: string; isAdmin: boolean; personId?: string }
   | { kind: 'service'; userId: 'service' }
   | { kind: 'agent'; userId: string; handle: string };
 
@@ -16,6 +17,8 @@ export interface Membership {
   containerIds: string[];
   isAdmin: boolean;
   username: string;
+  /** The person entity behind the account (Phase 1; created on first sight). */
+  personId?: string;
 }
 
 /** How long a person's channel list is reused; a membership change shows in search within this time. */
@@ -24,11 +27,13 @@ const CACHE_MS = 20_000;
 export class AccessService {
   readonly #chat: ChatClient;
   readonly #store: BrainStore;
+  readonly #people: PeopleService | undefined;
   readonly #cache = new Map<string, { at: number; value: Membership }>();
 
-  constructor(chat: ChatClient, store: BrainStore) {
+  constructor(chat: ChatClient, store: BrainStore, people?: PeopleService) {
     this.#chat = chat;
     this.#store = store;
+    this.#people = people;
   }
 
   /** Forget a person's cached memberships (after a change we made ourselves). */
@@ -48,8 +53,11 @@ export class AccessService {
         if ((channel.type === 'O' || channel.type === 'P') && channel.delete_at === 0) mmChannelIds.push(channel.id);
       }
     }
-    const containerIds = [GENERAL_CONTAINER_ID, ...(await this.#store.containersOfChannels(mmChannelIds))];
-    const value: Membership = { mmChannelIds, relayChannelIds: mmChannelIds.map(relayChannelIdFor), containerIds, isAdmin, username: user.username };
+    const containerIds = new Set([GENERAL_CONTAINER_ID, ...(await this.#store.containersOfChannels(mmChannelIds))]);
+    // Roles in a container (FR-2.3) make the person a member of it even without one of its channels.
+    const person = this.#people ? await this.#people.ensurePerson(userId, user) : undefined;
+    if (person) for (const containerId of await this.#people!.containersOf(person.id)) containerIds.add(containerId);
+    const value: Membership = { mmChannelIds, relayChannelIds: mmChannelIds.map(relayChannelIdFor), containerIds: [...containerIds], isAdmin, username: user.username, ...(person ? { personId: person.id } : {}) };
     this.#cache.set(userId, { at: Date.now(), value });
     return value;
   }

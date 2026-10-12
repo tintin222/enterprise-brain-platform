@@ -35,6 +35,23 @@ export const brainApiConfigSchema = z.object({
   BRAIN_FEATURE_CHAT_COMMANDS: flag(true),
   /** auto: on when an embedding provider is configured; true requires one; false keeps keyword search only. */
   BRAIN_FEATURE_SEMANTIC_SEARCH: z.enum(['auto', 'true', 'false']).default('auto'),
+  /** Phase 1 features (docs/brain/02-phase1-plan.md section 13). */
+  BRAIN_FEATURE_PROJECTS: flag(true),
+  BRAIN_FEATURE_PEOPLE: flag(true),
+  BRAIN_FEATURE_SYSTEMS: flag(true),
+  BRAIN_FEATURE_DOCUMENTS: flag(true),
+  BRAIN_FEATURE_TASKS: flag(true),
+  BRAIN_FEATURE_REMINDERS: flag(true),
+  /** Scanned PDFs and images are read by the model provider (D65); off keeps them searchable by name only. */
+  BRAIN_FEATURE_OCR_MODEL: flag(true),
+  /** Largest upload (D63). */
+  BRAIN_FILE_MAX_MB: z.coerce.number().int().min(1).max(500).default(50),
+  /** A project without activity for this many days is flagged stale to its owner (FR-1.5). */
+  BRAIN_STALE_DAYS: z.coerce.number().int().min(0).default(14),
+  /** Local hour (BRAIN_TIMEZONE) of the daily task reminders (FR-11.2). */
+  BRAIN_REMINDER_HOUR: z.coerce.number().int().min(0).max(23).default(8),
+  /** Documents extracted at a time (FR-5.2). */
+  BRAIN_EXTRACT_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   /** Embedding worker: how often it looks for chunks and how many it sends per round. */
   EMBED_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(2),
   EMBED_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(64),

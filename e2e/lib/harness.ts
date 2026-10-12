@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
-import { BrainStore, PostgresBrainClient } from '@brain/brain';
-import { AccessService, brainApiConfigSchema, buildApp, startEmbeddingWorker, TokenSigner, type BrainApiConfig, type EmbeddingWorker } from '@brain/brain-api';
+import { BrainStore, DatabaseFileStore, PostgresBrainClient } from '@brain/brain';
+import { AccessService, brainApiConfigSchema, buildApp, PeopleService, registerPhase1Jobs, startEmbeddingWorker, startJobRunner, TokenSigner, type BrainApiConfig, type EmbeddingWorker, type JobRunner } from '@brain/brain-api';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
 import { embeddingProviderFromConfig } from '@brain/models';
 import { Ingestion, ingestionConfigSchema } from '@brain/ingestion';
@@ -286,10 +286,15 @@ export class Stack {
     const adminChat = new MattermostChatClient(config.MM_URL, config.MM_ADMIN_TOKEN);
     const botUserId = (await chat.getMe()).id;
     const embeddings = embeddingProviderFromConfig(config);
-    const access = new AccessService(chat, store);
-    const tokens = new TokenSigner(config.BRAIN_SESSION_SECRET);
     const log = this.log('brain-api-e2e');
-    const app = await buildApp({ config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log });
+    const people = new PeopleService({ store, chat, pool: this.pool, log });
+    const access = new AccessService(chat, store, people);
+    const tokens = new TokenSigner(config.BRAIN_SESSION_SECRET);
+    const files = new DatabaseFileStore(this.pool);
+    // Jobs run only when a test ticks them (`jobs.tick(now)`), never on a timer.
+    const jobs = startJobRunner({ pool: this.pool, log, tickMs: 60_000, enabled: false });
+    const app = await buildApp({ config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, people, files, jobs, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log });
+    registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId });
     const worker = embeddings ? startEmbeddingWorker({ store, embeddings, log, intervalMs: 500, batchSize: 64 }) : undefined;
     await app.listen({ host: '0.0.0.0', port });
     return {
@@ -301,7 +306,10 @@ export class Stack {
       access,
       tokens,
       worker,
+      people,
+      jobs,
       stop: async () => {
+        jobs.stop();
         await worker?.stop();
         await app.close();
       },
@@ -318,6 +326,8 @@ export interface BrainApiHandle {
   access: AccessService;
   tokens: TokenSigner;
   worker: EmbeddingWorker | undefined;
+  people: PeopleService;
+  jobs: JobRunner;
   stop(): Promise<void>;
 }
 

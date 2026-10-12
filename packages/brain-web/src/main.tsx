@@ -10,6 +10,8 @@ import { ContainerPage } from './pages/ContainerPage.tsx';
 import { ContainersPage } from './pages/ContainersPage.tsx';
 import { EntityPage } from './pages/EntityPage.tsx';
 import { HomePage } from './pages/HomePage.tsx';
+import { PeoplePage } from './pages/PeoplePage.tsx';
+import { PersonPage } from './pages/PersonPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
 import './styles.css';
 
@@ -23,6 +25,8 @@ const router = createBrowserRouter([
       { path: 'containers', element: <ContainersPage /> },
       { path: 'containers/:id', element: <ContainerPage /> },
       { path: 'entities/:id', element: <EntityPage /> },
+      { path: 'people', element: <PeoplePage /> },
+      { path: 'people/:id', element: <PersonPage /> },
     ],
   },
 ]);

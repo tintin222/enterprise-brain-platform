@@ -17,6 +17,7 @@ Errors are `{ "error": "<message>", "code": "<code>" }`; validation errors add `
 - [Agents](#agents)
 - [Setup](#setup)
 - [Mattermost](#mattermost)
+- [People](#people)
 
 ## Session
 
@@ -671,3 +672,188 @@ Body:
 | `context` | object | no |
 
 Response 200: Default Response
+
+## People
+
+### `GET /api/v1/brain/people`
+
+The people directory (everyone signed in)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `q` | query | string | no |
+| `external` | query | `true` \| `false` | no |
+| `includeInactive` | query | `true` \| `false` | no |
+| `limit` | query | integer | no |
+| `offset` | query | integer | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `people` | array of object | yes |
+
+### `POST /api/v1/brain/people`
+
+An external contact without an account (FR-2.2)
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `name` | string | yes |
+| `emails` | array of string | no |
+| `organisation` | string | no |
+| `role` | string | no |
+| `notes` | string | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `person` | object | yes |
+
+### `POST /api/v1/brain/people/sync`
+
+Create or refresh a person for every chat account now (administrators; the daily job does the same)
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `seen` | number | yes |
+| `people` | number | yes |
+
+### `GET /api/v1/brain/people/search`
+
+Who knows about X: people ranked by the evidence that links them to what matches (FR-2.4)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `q` | query | string | yes |
+| `limit` | query | integer | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `people` | array of object | yes |
+| `semantic` | boolean | yes |
+
+### `GET /api/v1/brain/people/{id}`
+
+One person with their roles in projects and topics
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `person` | object | yes |
+| `memberships` | array of object | yes |
+| `suggestions` | array of object | yes |
+
+Response 404:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | string | yes |
+| `code` | string | no |
+
+### `PATCH /api/v1/brain/people/{id}`
+
+Edit a profile (the person themselves, or an administrator; external contacts: anyone signed in)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `role` | string | no |
+| `organisation` | string | no |
+| `expertise` | array of string | no |
+| `responsibilities` | array of string | no |
+| `workingHours` | string | no |
+| `preferredChannel` | string | no |
+| `managerId` | string \| null | no |
+| `name` | string | no |
+| `emails` | array of string | no |
+| `notes` | string | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `person` | object | yes |
+
+### `POST /api/v1/brain/people/{id}/suggestions/{n}/{decision}`
+
+Confirm or dismiss a suggested expertise or responsibility (FR-2.5)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+| `n` | path | integer | yes |
+| `decision` | path | `confirm` \| `dismiss` | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `person` | object | yes |
+
+### `GET /api/v1/brain/containers/{id}/members`
+
+A container's people and their roles
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `members` | array of object | yes |
+
+### `POST /api/v1/brain/containers/{id}/members`
+
+Give a person a role in a Project or Topic (members of the container, administrators)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `personId` | string | yes |
+| `role` | `sponsor` \| `product_owner` \| `end_user` \| `developer` \| `fde` \| `reviewer` \| `member` | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `link` | object | yes |
+
+### `DELETE /api/v1/brain/containers/{id}/members/{personId}`
+
+Remove a person's role in a container
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+| `personId` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `removed` | boolean | yes |

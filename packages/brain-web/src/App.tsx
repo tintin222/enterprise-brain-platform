@@ -71,6 +71,9 @@ export function App() {
           <Link to="/containers">
             <FormattedMessage id="nav.containers" />
           </Link>
+          <Link to="/people">
+            <FormattedMessage id="nav.people" />
+          </Link>
         </nav>
         <SearchBox />
         {me && (

@@ -30,6 +30,8 @@ export interface ChatClient {
   getUser(userId: string): Promise<MmUser | undefined>;
   getUsersByIds(userIds: string[]): Promise<MmUser[]>;
   getUsersByUsernames(usernames: string[]): Promise<MmUser[]>;
+  /** Every account, bots and deactivated people included (people sync, FR-2.1). */
+  listUsers(): Promise<MmUser[]>;
   getTeam(teamId: string): Promise<MmTeam>;
   getTeamByName(name: string): Promise<MmTeam | undefined>;
   getMyTeams(): Promise<MmTeam[]>;
@@ -176,6 +178,13 @@ export class MattermostChatClient implements ChatClient {
 
   async getUsersByUsernames(usernames: string[]): Promise<MmUser[]> {
     return usernames.length === 0 ? [] : this.#request('POST', '/users/usernames', usernames);
+  }
+
+  async listUsers(): Promise<MmUser[]> {
+    // Mattermost lists active accounts by default and only deactivated ones with inactive=true.
+    const active = await this.#pages<MmUser>('/users?active=true');
+    const deactivated = await this.#pages<MmUser>('/users?inactive=true');
+    return [...new Map([...active, ...deactivated].map((user) => [user.id, user])).values()];
   }
 
   getTeam(teamId: string): Promise<MmTeam> {
