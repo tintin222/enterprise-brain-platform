@@ -1,12 +1,15 @@
 // pnpm dev:seed: idempotent setup of the local stack after `pnpm dev:up`.
-//   Mattermost: enable bot accounts and user access tokens, create the dev team, the admin, two people
-//   (alice, bob) and the @brain bridge bot (system admin) with an access token written to .env.
+//   Mattermost: enable bot accounts and user access tokens, apply the Enterprise Brain name and logo, create
+//   the dev team, the admin, two people (alice, bob) and the @brain bridge bot (system admin) with an access
+//   token written to .env.
 //   Relay: check the bridge key is the relay owner and make the reader key a relay member.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { MattermostApi, MattermostError, type MmUser } from '../lib/mattermost.ts';
 import { identityFromHex } from '../lib/nostr.ts';
 import { canAuthenticate, ensureRelayMember } from '../lib/relay-admin.ts';
 import { waitForStack } from '../lib/stack.ts';
-import { loadEnv, requireValue, updateEnvFile } from '../lib/env.ts';
+import { loadEnv, repoRoot, requireValue, updateEnvFile } from '../lib/env.ts';
 
 const env = loadEnv();
 const mmUrl = requireValue(env, 'MM_URL');
@@ -42,11 +45,19 @@ const me = await admin.get<MmUser>('/users/me');
 if (!me.roles.split(' ').includes('system_admin')) throw new Error(`@${adminUsername} is not a system admin`);
 
 await admin.put('/config/patch', {
-  ServiceSettings: { EnableBotAccountCreation: true, EnableUserAccessTokens: true },
-  // Mattermost's default allows 50 members per team; a workspace at Q7 scale has 500 people in one team.
-  TeamSettings: { MaxUsersPerTeam: 10000 },
+  // The desktop-app landing page offers Mattermost's own apps, so it stays off until we ship ours (D44).
+  ServiceSettings: { EnableBotAccountCreation: true, EnableUserAccessTokens: true, EnableDesktopLandingPage: false },
+  TeamSettings: {
+    // Mattermost's default allows 50 members per team; a workspace at Q7 scale has 500 people in one team.
+    MaxUsersPerTeam: 10000,
+    // Mattermost's built-in branding (D44); its logo, edition badge and footer need our fork.
+    SiteName: 'Enterprise Brain',
+    EnableCustomBrand: true,
+    CustomDescriptionText: 'Team chat with AI agents that know your company',
+  },
 });
-console.log('Enabled bot accounts and user access tokens; allowed 10,000 members per team');
+await admin.upload('/brand/image', 'image', readFileSync(path.join(repoRoot, 'branding/png/mark-512.png')), 'mark-512.png', 'image/png');
+console.log('Enabled bot accounts and user access tokens; allowed 10,000 members per team; applied the Enterprise Brain name and logo');
 
 // --- Team and people ---
 let team = await admin.find<{ id: string }>(`/teams/name/${teamName}`);

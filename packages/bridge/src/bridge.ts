@@ -202,6 +202,18 @@ export class Bridge {
     await this.prepare();
     const { publisher } = this.services;
 
+    // The shared reader key must be a relay member before any service can read (Q12). The bridge, as relay
+    // owner, grants that on every start; repeating it is harmless. A relay reachable only from inside its
+    // network (staging) then needs no separate setup step (docs/staging.md).
+    await retry(
+      () =>
+        this.#deps.relay.publish(
+          this.bridgeSigner.sign({ kind: 9030, tags: [['p', this.readerSigner.pubkey], ['role', 'member']], content: '', created_at: nowSeconds() }),
+          this.bridgeSigner,
+        ),
+      { attempts: 8, baseMs: 1000, maxMs: 15_000, onRetry: (error, attempt) => log.warn({ ...errorFields(error), attempt }, 'Could not make the reader key a relay member; retrying') },
+    );
+
     await publisher.drain();
     this.#subscriber = new RelaySubscriber({
       url: config.RELAY_WS_URL,

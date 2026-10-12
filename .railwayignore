@@ -1,0 +1,4 @@
+# Files `railway up` must never upload (it also skips what .gitignore lists). Secrets stay on this machine.
+.env
+.env.*
+!.env.example

@@ -23,7 +23,7 @@ We do not modify Mattermost or Buzz source code in this repository. Both run as 
 | `docs/decisions.md` | Before making a design choice, and whenever upstream behaviour matters. Holds decisions, verified facts, the assumptions A1..A12 with their Phase 0 results, and the owner's questions Q1..Q14 with their answers. |
 | `docs/spike-findings.md` | Always, once per session. Results of testing each assumption against the live local stack (Phase 0), plus what later phases found. This file overrides the specs where they disagree. |
 | `docs/operations.md` | Before running, monitoring or repairing the services: endpoints, metrics, throttles, dead letters, key rotation, relay rebuild. |
-| `docs/security-review.md`, `docs/load-test.md`, `docs/phase7.md` | When touching the prompt path or retrieval scope, performance limits, or productisation. |
+| `docs/security-review.md`, `docs/load-test.md`, `docs/phase7.md`, `docs/staging.md` | When touching the prompt path or retrieval scope, performance limits, productisation, or the staging deployment. |
 
 ## Rules
 
@@ -51,6 +51,7 @@ CLAUDE.md
 docs/
 infra/                 Docker Compose for the local stack (Mattermost, Buzz relay, databases)
   mostlymatter/        image with the uncapped Mostlymatter build (compose.mostlymatter.yml selects it)
+  services/            one image for the bridge, agent-runtime, ingestion and admin API (staging, docs/staging.md)
   third_party/buzz/    licence and notice for the compose services adapted from Buzz
 packages/
   shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, local brain
@@ -66,6 +67,7 @@ scripts/
   ops/                 relay wipe and rebuild, log secret check
   load/                Phase 6 load test
 e2e/                   end-to-end tests against the local stack
+branding/              Enterprise Brain logo: SVG sources and PNG exports (branding/README.md)
 ```
 
 ## Commands
@@ -78,7 +80,7 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | --- | --- |
 | `pnpm dev:up [--mostlymatter \| --team-edition]` | Create `.env` from `.env.example` if needed (generates service keys and secrets, never overwrites existing values), then start the stack and wait until it is healthy. Mattermost on `localhost:8065`, relay on `localhost:3000`, our Postgres on `localhost:5433`. `--mostlymatter` switches to the uncapped Mostlymatter build (needs `docker-buildx`), `--team-edition` back. |
 | `pnpm dev:down` | Stop the stack and keep its data. `pnpm dev:down --wipe` also deletes every volume and `.env`. |
-| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
+| `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, apply the Enterprise Brain name and logo (D44), create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
 | `pnpm bridge` | Run the bridge against the local stack (Ctrl-C stops it cleanly) |
 | `pnpm agent-runtime` | Run the agent runtime (dispatcher and job runner). Agents with model `echo` answer without a model; others need `ANTHROPIC_API_KEY`. |
 | `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |

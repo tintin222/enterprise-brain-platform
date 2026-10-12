@@ -1,0 +1,16 @@
+# Build context for infra/services/Dockerfile (repository root). Secrets never enter an image.
+.env
+.env.*
+!.env.example
+.git
+**/node_modules
+**/*.log
+coverage
+dist
+scripts/spike/results
+scripts/load/results
+branding
+docs
+infra
+e2e/*
+!e2e/package.json

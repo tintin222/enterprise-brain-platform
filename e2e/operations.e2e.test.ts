@@ -1,6 +1,9 @@
-// Phase 6 operations: health, readiness and metrics endpoints, and dead-letter replay in both directions.
+// Phase 6 operations: health, readiness and metrics endpoints, dead-letter replay in both directions, and the
+// reader key's relay membership.
 import type { AgentRecord } from '@brain/agent-runtime';
 import type { Bridge } from '@brain/bridge';
+import { identityFromHex } from '@brain/scripts/lib/nostr.ts';
+import { canAuthenticate } from '@brain/scripts/lib/relay-admin.ts';
 import { nowSeconds, relayChannelIdFor } from '@brain/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Stack, waitFor, type MmSession } from './lib/harness.ts';
@@ -90,5 +93,17 @@ describe('operations', () => {
     await bridge.catchUpAll();
     expect((await stack.thread(alice, root.id)).filter((post) => post.props?.relay_event_id === answer.id)).toHaveLength(1);
     expect(await stack.eventsForPost(channel.id, missed.id)).toHaveLength(1);
+  });
+
+  it('the bridge makes the reader key a relay member when it starts', { timeout: 120_000 }, async () => {
+    // A relay that does not know the reader key (staging's relay is unreachable for pnpm dev:seed).
+    await bridge.stop();
+    const env = { RELAY_WS_URL: stack.config.RELAY_WS_URL };
+    const reader = identityFromHex(stack.config.READER_SECRET_KEY);
+    await stack.relay.publish(stack.bridgeSigner.sign({ kind: 9031, tags: [['p', reader.pubkey]], content: '', created_at: nowSeconds() }), stack.bridgeSigner);
+    expect(await canAuthenticate(env, reader)).toBe(false);
+
+    bridge = await stack.startBridge();
+    expect(await canAuthenticate(env, reader)).toBe(true);
   });
 });

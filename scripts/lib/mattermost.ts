@@ -81,6 +81,19 @@ export class MattermostApi {
     return this.request<T>('DELETE', path);
   }
 
+  /** POST one file as multipart form data under `field` (for example the brand image). */
+  async upload<T>(path: string, field: string, data: Uint8Array<ArrayBuffer>, filename: string, type: string): Promise<T> {
+    const form = new FormData();
+    form.append(field, new Blob([data], { type }), filename);
+    const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const response = await fetch(`${this.baseUrl}/api/v4${path}`, { method: 'POST', headers, body: form });
+    const text = await response.text();
+    const parsed: unknown = text ? JSON.parse(text) : undefined;
+    if (!response.ok) throw new MattermostError(response.status, 'POST', path, parsed);
+    return parsed as T;
+  }
+
   /** GET that maps 404 to undefined. */
   async find<T>(path: string): Promise<T | undefined> {
     try {
