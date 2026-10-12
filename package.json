@@ -23,6 +23,7 @@
     "agent-runtime": "tsx packages/agent-runtime/src/main.ts",
     "agent:provision": "tsx packages/agent-runtime/src/cli/provision.ts",
     "agent:echo": "tsx packages/agent-runtime/src/cli/echo.ts",
+    "admin-api": "tsx packages/agent-runtime/src/cli/admin-api.ts",
     "ingestion": "tsx packages/ingestion/src/main.ts",
     "ingest:purge": "tsx packages/ingestion/src/cli/purge.ts",
     "spike": "tsx scripts/spike/run.ts",

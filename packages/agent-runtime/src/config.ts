@@ -36,3 +36,14 @@ export const provisionConfigSchema = z.object({
 });
 
 export type ProvisionConfig = z.infer<typeof provisionConfigSchema>;
+
+/** The internal admin API (`pnpm admin-api`, build-plan Phase 7 task 5). */
+export const adminApiConfigSchema = z.object({
+  ...provisionConfigSchema.shape,
+  /** The @brain bot's token, to find its user id: adding @brain to a channel enables it. */
+  MM_BRIDGE_TOKEN: z.string().min(1),
+  ADMIN_API_TOKEN: z.string().min(32, 'must be at least 32 characters'),
+  ADMIN_API_PORT: z.coerce.number().int().min(0).max(65535).default(9110),
+});
+
+export type AdminApiConfig = z.infer<typeof adminApiConfigSchema>;

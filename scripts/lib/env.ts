@@ -23,6 +23,7 @@ export const generators: Record<string, Generator> = {
   READER_SECRET_KEY: newSecretKeyHex,
   BUZZ_RELAY_PRIVATE_KEY: newSecretKeyHex,
   KEY_ENCRYPTION_KEY: hex32,
+  ADMIN_API_TOKEN: hex32,
   BUZZ_GIT_HOOK_HMAC_SECRET: hex32,
   STATE_DB_PASSWORD: dbPassword,
   MM_DB_PASSWORD: dbPassword,

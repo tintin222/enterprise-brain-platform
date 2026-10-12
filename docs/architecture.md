@@ -41,6 +41,7 @@ Non-goals for v1: direct messages with agents, voice, federation with outside No
 | bridge | this repo | Mirrors agent-enabled Mattermost channels into the relay, and agent-authored relay events back into Mattermost. |
 | agent-runtime | this repo | Watches the relay for mentions of registered agents, builds context, calls the model, publishes the reply as the agent. |
 | ingestion | this repo | Reads the relay log and keeps the brain's index in step, including edits and deletions. |
+| admin API | this repo | Internal endpoints the brain product calls to create agents, enable channels and add agents to channels (`pnpm admin-api`, docs/phase7.md). |
 | enterprise brain | existing product | Knowledge store and retrieval. Reached through a `BrainClient` adapter. Until it has an API, a local stand-in in our state database takes its place (D34). |
 
 ## 3. Sources of truth
@@ -109,7 +110,7 @@ Ingestion reads the same relay log with its own cursor, groups events into threa
 | Local dev | Official Team Edition container 11.7.12, pinned by digest (`infra/compose.yml`); Mostlymatter of the same version with `pnpm dev:up --mostlymatter` (D40) | Relay 0.2.1 (`relay-v0.2.1`, D12), services adapted from Buzz's `deploy/compose/` bundle |
 | Staging / production | Mostlymatter build of the same version first; our own branded thin fork later (Phase 7) | Upstream production compose bundle (`deploy/compose/` in the Buzz repo), pinned release |
 
-Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103, all bound to 127.0.0.1.
+Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103 and the admin API 9110, all bound to 127.0.0.1.
 
 Operations (health and metrics endpoints, throttling, dead letters, key rotation, relay rebuild) are in `docs/operations.md`, the load test in `docs/load-test.md`, the security review in `docs/security-review.md`.
 

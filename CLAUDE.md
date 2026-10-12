@@ -23,7 +23,7 @@ We do not modify Mattermost or Buzz source code in this repository. Both run as 
 | `docs/decisions.md` | Before making a design choice, and whenever upstream behaviour matters. Holds decisions, verified facts, the assumptions A1..A12 with their Phase 0 results, and the owner's questions Q1..Q14 with their answers. |
 | `docs/spike-findings.md` | Always, once per session. Results of testing each assumption against the live local stack (Phase 0), plus what later phases found. This file overrides the specs where they disagree. |
 | `docs/operations.md` | Before running, monitoring or repairing the services: endpoints, metrics, throttles, dead letters, key rotation, relay rebuild. |
-| `docs/security-review.md`, `docs/load-test.md` | When touching the prompt path or retrieval scope, or performance limits. |
+| `docs/security-review.md`, `docs/load-test.md`, `docs/phase7.md` | When touching the prompt path or retrieval scope, performance limits, or productisation. |
 
 ## Rules
 
@@ -55,7 +55,7 @@ infra/                 Docker Compose for the local stack (Mattermost, Buzz rela
 packages/
   shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, local brain
   bridge/              Mattermost <-> Buzz mirror, dead-letter tool (third_party/: emoji-datasource notice)
-  agent-runtime/       agent registry, dispatcher, context assembly, LLM calls
+  agent-runtime/       agent registry, dispatcher, context assembly, LLM calls, admin API
   ingestion/           relay -> brain indexing, purge tool
 scripts/
   lib/                 env file, Mattermost and relay helpers for scripts
@@ -84,6 +84,7 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm agent:provision --handle <h> --name "<Name>" [--model echo]` | Create or update an agent (key, bot, token, relay identity, registry record); safe to re-run |
 | `pnpm agent:echo [--handle echo]` | Run the echo agent, which answers mentions with "echo: ..." (no model) |
 | `pnpm ingestion` | Run ingestion, which keeps the local brain (D34) in step with the relay; agents search it |
+| `pnpm admin-api` | Internal API for the brain product: create agents, enable channels, add agents to channels (docs/phase7.md) |
 | `pnpm ingest:purge --channel <relay channel id> \| --author <pubkey>` | Remove a channel's or an author's content from the brain and keep it out |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` creates about 250 Mattermost users, so it runs only when named. |
 | `pnpm dead-letter list \| show <id> \| replay <id...> \| replay --all` | Inspect and replay what the bridge gave up on (docs/operations.md section 3) |
