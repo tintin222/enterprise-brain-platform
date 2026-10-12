@@ -572,7 +572,7 @@ Full export in an open format (NFR-9)
 
 ### `GET /api/v1/brain/export/manifest`
 
-What an export contains: tables and row counts
+What an export contains: tables with row counts, the uploaded files
 
 Response 200:
 
@@ -582,6 +582,23 @@ Response 200:
 | `generatedAt` | string | yes |
 | `tables` | object | yes |
 | `files` | array of string | yes |
+| `uploads` | object | yes |
+
+### `GET /api/v1/brain/export/files/{id}`
+
+One uploaded file by its id (administrators; audited)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200: Default Response
+
+### `GET /api/v1/brain/export/files.jsonl`
+
+The uploaded files' metadata as JSON Lines (administrators)
+
+Response 200: Default Response
 
 ### `GET /api/v1/brain/export/{file}`
 

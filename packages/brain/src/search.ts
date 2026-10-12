@@ -67,6 +67,11 @@ function entityFilterSql(filters: SearchFilters | undefined, params: Params): st
  * any lexeme at all (D34). Each tier runs only if the one before found nothing (one-time filters).
  */
 const RARE_TERMS = 3;
+/**
+ * The fallback tiers rank the newest chunks that match, up to this many, instead of every match: a question's
+ * words can match tens of thousands of chunks, and ranking them all costs seconds (gates/phase-1.md item 3).
+ */
+const FALLBACK_CANDIDATES = 4000;
 const LEXEMES = `lex AS (
       SELECT lexeme, COALESCE(s.chunks, 0) AS n, ordinality
       FROM unnest(tsvector_to_array(to_tsvector('english', $QUERY))) WITH ORDINALITY AS t(lexeme, ordinality)
@@ -118,6 +123,7 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
   const scope = scopeSql(input.scope, params);
   const chunkFilters = chunkFilterSql(input.filters, params);
   const candidates = params.add(CANDIDATES);
+  const fallbackCandidates = params.add(FALLBACK_CANDIDATES);
   const vectorHalf = input.embedding
     ? `SELECT id, entity_id, distance FROM (
          SELECT c.id, c.entity_id, (c.embedding <=> ${params.add(toVectorLiteral(input.embedding))}::vector) AS distance
@@ -139,16 +145,24 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
       LIMIT ${candidates}
     ),
     kw_rare AS (
-      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.any_term) AS rank
-      FROM brain.chunks c, q
-      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND q.rare_terms IS NOT NULL AND c.search @@ q.rare_terms AND ${scope}${chunkFilters}
+      SELECT recent.id, recent.entity_id, ts_rank_cd(recent.search, q.any_term) AS rank
+      FROM (
+        SELECT c.id, c.entity_id, c.search FROM brain.chunks c, q
+        WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND q.rare_terms IS NOT NULL AND c.search @@ q.rare_terms AND ${scope}${chunkFilters}
+        ORDER BY c.updated_at DESC
+        LIMIT ${fallbackCandidates}
+      ) recent, q
       ORDER BY rank DESC
       LIMIT ${candidates}
     ),
     kw_any AS (
-      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.any_term) AS rank
-      FROM brain.chunks c, q
-      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND NOT EXISTS (SELECT 1 FROM kw_rare) AND q.any_term IS NOT NULL AND c.search @@ q.any_term AND ${scope}${chunkFilters}
+      SELECT recent.id, recent.entity_id, ts_rank_cd(recent.search, q.any_term) AS rank
+      FROM (
+        SELECT c.id, c.entity_id, c.search FROM brain.chunks c, q
+        WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND NOT EXISTS (SELECT 1 FROM kw_rare) AND q.any_term IS NOT NULL AND c.search @@ q.any_term AND ${scope}${chunkFilters}
+        ORDER BY c.updated_at DESC
+        LIMIT ${fallbackCandidates}
+      ) recent, q
       ORDER BY rank DESC
       LIMIT ${candidates}
     ),

@@ -32,11 +32,30 @@ Metrics worth alerting on:
 | `brain_ingestion_pending_threads` | Threads waiting to be indexed | growing |
 | `brain_ingestion_index_lag_seconds` | First change of a thread to its indexing | p95 above debounce + 15 s |
 | `brain_embed_pending` | Chunks waiting for an embedding (brain-api's worker) | growing for minutes: the embedding provider is down or the key is wrong (`brain_embed_chunks_total{outcome="error"}`) |
+| `brain_documents_pending` | Documents waiting for text extraction (brain-api's extraction worker) | growing for minutes: the worker is stuck or the OCR provider fails (`brain_documents_extracted_total{outcome="failed"}`) |
+| `brain_documents_attachments_total` | Chat attachments turned into documents, by outcome | `outcome="failed"` rising: the bot cannot download files |
+| `brain_jobs_total`, `brain_job_seconds` | Runs of the brain API's recurring jobs by name and outcome, and their duration | `outcome="error"` for the same job on consecutive ticks: see its warning in the log |
 | `brain_bridge_channels_opted_out` | Channels `@brain` was removed from, which the capture sweep leaves alone (D50) | informational |
 
 Logs are JSON lines (pino) with a `service` field. Fields that can carry secrets are redacted; the brain API logs one line per request without the query string. `pnpm check:logs <files>` searches log files for every secret in `.env` and in the key store and fails if one appears (section 4); with `ENV_FILE=.env.staging` and `--env-only` it checks staging's logs against staging's secrets (docs/staging.md). `pnpm check:secrets [paths]` scans the repository (or the given files) for key shapes, secret assignments and known values; CI runs it on every push (`.secretsignore` lists deliberate false positives).
 
-The brain API also answers `GET /openapi.json` (the document behind `docs/brain/API.md`), and `pnpm brain:bench` measures search latency on synthetic data (NFR-1; `docs/brain/gates/phase-0.md`). After a large deletion of chunks (`pnpm ingest:purge` of a busy channel, `pnpm brain:bench --clean`), the vector index keeps the deleted rows until autovacuum runs and keeps its size until `REINDEX INDEX brain.chunks_embedding`; searches stay correct meanwhile because the vector half scans iteratively (D62), only slower.
+The brain API also answers `GET /openapi.json` (the document behind `docs/brain/API.md`), and `pnpm brain:bench` measures search latency on synthetic data (NFR-1; `docs/brain/gates/phase-0.md`).
+
+### 1.1 The brain API's jobs and workers (Phase 1)
+
+Recurring work runs inside brain-api; `brain.jobs` records every run, and the row is the lock, so a second brain-api process never repeats a period. A failed run frees its row and is retried on the next tick (once a minute); the failure is in the log (`Job failed; it will be retried`) and in `brain_jobs_total{outcome="error"}`. Times are local to `BRAIN_TIMEZONE`.
+
+| Job | When | What |
+| --- | --- | --- |
+| `people-sync` | daily at 03:00 | A person entity for every chat account (new accounts, renames, deactivation). `POST /api/v1/brain/people/sync` runs it now |
+| `stale-projects` | daily at 07:00 | Flags projects without activity for `BRAIN_STALE_DAYS` and tells the owner once |
+| `task-reminders` | daily at `BRAIN_REMINDER_HOUR` | One direct message per person with due and overdue tasks and their buttons |
+| `chat-attachments` | every 2 minutes | Files posted in captured channels become documents (D67) |
+| `lexeme-stats` | daily at 02:00 | Word statistics for the search's rare-terms tier (D66) |
+
+Two workers run continuously: the embedding worker (section 1) and the extraction worker, which reads the text of new documents (`BRAIN_EXTRACT_CONCURRENCY` at a time, every 3 s). `POST /api/v1/brain/documents/{id}/extract` re-runs one document.
+
+**Export:** `pnpm brain:export <dir> [--verify]` writes every table, the uploaded files and a manifest to a directory and, with `--verify`, proves the round trip into a temporary database (`docs/brain/export-format.md`). After a large deletion of chunks (`pnpm ingest:purge` of a busy channel, `pnpm brain:bench --clean`), the vector index keeps the deleted rows until autovacuum runs and keeps its size until `REINDEX INDEX brain.chunks_embedding`; searches stay correct meanwhile because the vector half scans iteratively (D62), only slower.
 
 ## 2. Write throttling
 

@@ -29,6 +29,7 @@
     "brain:api-docs": "tsx packages/brain-api/src/cli/api-docs.ts",
     "brain:setup": "tsx packages/brain-api/src/cli/setup.ts",
     "brain:bench": "tsx scripts/brain/bench.ts",
+    "brain:export": "tsx scripts/brain/export.ts",
     "spike": "tsx scripts/spike/run.ts",
     "gen:emoji": "tsx scripts/gen/emoji.ts",
     "keys:rotate-master": "tsx scripts/keys/rotate-master.ts",

@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { provisionAgent, AgentRepository, type AgentRecord } from '@brain/agent-runtime';
-import { ENTITY_TYPES, EXPORT_TABLES, GENERAL_CONTAINER_ID, type EntityType, type ExportTable } from '@brain/brain';
+import { ENTITY_TYPES, EXPORT_FORMAT, EXPORT_TABLES, GENERAL_CONTAINER_ID, type EntityType, type ExportTable } from '@brain/brain';
 import { ChatApiError } from '@brain/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -252,10 +252,26 @@ export function registerBrainRoutes(app: FastifyInstance, deps: BrainApiDeps, li
 
   // --- export (NFR-9) ---
 
-  api.get('/export/manifest', { schema: { tags: ['Export'], summary: 'What an export contains: tables and row counts', response: { 200: z.object({ format: z.string(), generatedAt: z.string(), tables: z.record(z.string(), z.number()), files: z.array(z.string()) }) } } }, async (request) => {
+  api.get('/export/manifest', { schema: { tags: ['Export'], summary: 'What an export contains: tables with row counts, the uploaded files', response: { 200: z.object({ format: z.string(), generatedAt: z.string(), tables: z.record(z.string(), z.number()), files: z.array(z.string()), uploads: z.object({ count: z.number(), bytes: z.number() }) }) } } }, async (request) => {
     requireAdmin(request);
     const counts = await store.counts();
-    return { format: 'jsonl/1', generatedAt: new Date().toISOString(), tables: counts, files: EXPORT_TABLES.map((table) => `${table}.jsonl`) };
+    const uploads = await deps.pool.query<{ n: number; bytes: string }>('SELECT count(*)::int AS n, COALESCE(sum(size), 0)::text AS bytes FROM brain.files');
+    return { format: EXPORT_FORMAT, generatedAt: new Date().toISOString(), tables: counts, files: [...EXPORT_TABLES.map((table) => `${table}.jsonl`), 'files.jsonl'], uploads: { count: uploads.rows[0]?.n ?? 0, bytes: Number(uploads.rows[0]?.bytes ?? 0) } };
+  });
+
+  api.get('/export/files/:id', { schema: { tags: ['Export'], summary: 'One uploaded file by its id (administrators; audited)', params: z.object({ id: s.id }) } }, async (request, reply) => {
+    const principal = requireAdmin(request);
+    const file = await deps.files.get(request.params.id);
+    if (!file) throw new AccessError(404, 'No such file');
+    await store.audit({ action: 'export', details: { file: file.id, size: file.size } }, writeContext(request, principal));
+    return reply.type(file.mediaType).header('Content-Length', String(file.bytes.byteLength)).send(file.bytes);
+  });
+
+  api.get('/export/files.jsonl', { schema: { tags: ['Export'], summary: 'The uploaded files\' metadata as JSON Lines (administrators)' } }, async (request, reply) => {
+    const principal = requireAdmin(request);
+    await store.audit({ action: 'export', details: { table: 'files' } }, writeContext(request, principal));
+    const rows = await deps.pool.query<Record<string, unknown>>('SELECT id, sha256, size, media_type, created_by, created_at FROM brain.files ORDER BY created_at, id');
+    return reply.type('application/x-ndjson').send(rows.rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
   });
 
   api.get('/export/:file', { schema: { tags: ['Export'], summary: 'One table as JSON Lines (administrators); chunks without embeddings unless ?embeddings=true', params: z.object({ file: z.string().regex(/^[a-z_]+\.jsonl$/) }), querystring: z.object({ embeddings: z.enum(['true', 'false']).optional() }) } }, async (request, reply) => {

@@ -6,11 +6,15 @@ The brain exports everything it holds in an open, documented format, so an insta
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/v1/brain/export/manifest` | `{ format: "jsonl/1", generatedAt, tables: { <table>: <rows> }, files: [...] }` |
+| `GET /api/v1/brain/export/manifest` | `{ format: "jsonl/2", generatedAt, tables: { <table>: <rows> }, files: [...], uploads: { count, bytes } }` |
 | `GET /api/v1/brain/export/<table>.jsonl` | The table as JSON Lines (`application/x-ndjson`): one JSON object per row, keys as the columns below |
 | `GET /api/v1/brain/export/chunks.jsonl?embeddings=true` | Chunks with their vectors (`embedding` as a `[…]` string); without the flag vectors are left out |
+| `GET /api/v1/brain/export/files.jsonl` | The uploaded files' metadata: `id, sha256, size, media_type, created_by, created_at` |
+| `GET /api/v1/brain/export/files/<id>` | One uploaded file, byte for byte, with its media type |
 
-Tables, in the order they should be imported: `containers`, `channel_links`, `entities`, `entity_versions`, `links`, `chunks`, `audit_log`, `events`, `channels`.
+`pnpm brain:export <dir>` writes all of it to a directory: `manifest.json`, one `.jsonl` per table (chunks with their vectors), `files.jsonl` and `files/<id>`. `pnpm brain:export <dir> --verify` then imports the directory into a temporary database on the same server, compares every table's count, every entity's version and title, and every file's hash with the export, prints the report and drops the database (exit code 1 on any difference). The import itself is `importFromDirectory(pool, dir)` in `packages/brain`, usable on any empty brain schema whose migrations have run.
+
+Tables, in the order they should be imported: `containers`, `channel_links`, `entities`, `entity_versions`, `links`, `chunks`, `audit_log`, `events`, `channels`, then `files`.
 
 ## Columns
 
@@ -25,5 +29,6 @@ Times are ISO-8601 with time zone. Ids are opaque text.
 - `audit_log`: `id, at, actor_id, actor_kind, action, entity_id, container_id, details (JSON), ip, request_id`
 - `events`: `id, name, payload (JSON), created_at, delivered_at`
 - `channels`: the relay-side channel facts ingestion keeps: `channel_id, name, visibility (open|private), active, updated_at`
+- `files`: the uploaded files (D63): `id, sha256, size, media_type, created_by, created_at`, the bytes in `files/<id>`; document entities reference them through `data.fileId`
 
-Phase 1 adds documents' files to the export (as files next to the JSON Lines), and `pnpm brain:export <dir>` writes the whole set to a directory with a verification round trip.
+Not exported: `settings` (the installation's own Mattermost registration), `jobs` (run bookkeeping), `lexeme_stats` (derived from the chunks, rebuilt by a job).

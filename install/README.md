@@ -23,8 +23,8 @@ cp install/config.example.env install/config.env     # then edit the "Addresses"
 Then:
 
 1. Open the chat address and sign in as the admin. Invite people from the System Console or with the team's invite link.
-2. In any channel, type `/brain help`. `/brain search <words>` searches; `/brain link` makes the channel feed a project or topic.
-3. Open the brain address and sign in with the chat account: projects and topics, entities with their versions, and search with citations.
+2. In any channel, type `/brain help`. `/brain search <words>` searches; `/brain link` makes the channel feed a project or topic; `/project new` creates a project with its three channels; `/topic here` makes the channel a topic; `/task <title>` in a thread makes a task with the thread as evidence; `/task mine` lists yours.
+3. Open the brain address and sign in with the chat account: projects and topics with their home pages, people and who knows what, systems with their schemas and API specs, documents (upload anything; the text is read and searchable), tasks (list, board, my tasks), search with citations.
 
 ## Settings
 
@@ -38,7 +38,8 @@ Everything is in `install/config.env`; `./install/brain init` fills the empty se
 | `MM_TEAM_NAME`, `MM_ADMIN_USERNAME`, `MM_ADMIN_EMAIL` | The workspace and its first administrator. |
 | `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Model access for agents (D21, D54) and embeddings for search by meaning (D53). Empty keys keep keyword search. |
 | `BRAIN_CAPTURE_CHANNELS` | `all` (default): the brain reads every public and private channel; `public`; or `opt-in` (only channels someone invites `@brain` to). A channel `@brain` is removed from stays out (D50). |
-| `BRAIN_FEATURE_*` | Feature flags per D55. |
+| `BRAIN_FEATURE_*` | Feature flags per D55: `API`, `CHAT_COMMANDS`, `SEMANTIC_SEARCH`, and Phase 1's `PROJECTS`, `PEOPLE`, `SYSTEMS`, `DOCUMENTS`, `TASKS`, `REMINDERS`, `OCR_MODEL` (scans and images read by the model provider; never confidential or no-ai documents). |
+| `BRAIN_FILE_MAX_MB`, `BRAIN_STALE_DAYS`, `BRAIN_REMINDER_HOUR`, `BRAIN_EXTRACT_CONCURRENCY` | Largest upload (50 MB), days before a quiet project is flagged (14), local hour of the task reminders (8), documents extracted at a time (2). |
 | `BRAIN_TIMEZONE` | The installation's time zone for schedules and dates. |
 
 Changing a setting: edit `config.env`, then `./install/brain up` again (it recreates only what changed) and, for Mattermost-side settings, `./install/brain seed`.
@@ -54,7 +55,7 @@ Changing a setting: edit `config.env`, then `./install/brain up` again (it recre
 | `./install/brain down` | Stop everything; data stays in the volumes |
 | `./install/brain down --wipe` | Stop and delete every volume: all chat, relay and brain data |
 
-Backups: the Docker volumes (`brain_mm-postgres-data`, `brain_mm-data`, `brain_buzz-postgres-data`, `brain_buzz-s3-data`, `brain_state-postgres-data`, `brain_caddy-data`) and `install/config.env`. The relay can be rebuilt from the chat (`docs/operations.md` section 5), the brain's store can be exported in an open format (`docs/brain/export-format.md`).
+Backups: the Docker volumes (`brain_mm-postgres-data`, `brain_mm-data`, `brain_buzz-postgres-data`, `brain_buzz-s3-data`, `brain_state-postgres-data`, `brain_caddy-data`) and `install/config.env`. Uploaded documents live in the state database, so one backup covers them. The relay can be rebuilt from the chat (`docs/operations.md` section 5); the brain's store, files included, can be exported in an open format and the export verified (`docs/brain/export-format.md`).
 
 Upgrades: `git pull`, then `./install/brain up`. Migrations run when the services start.
 

@@ -77,8 +77,9 @@ install/               a customer installation: Compose bundle, installer wrappe
 packages/
   shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, BrainClient seam
   models/              LlmProvider (Anthropic, Google, echo) and EmbeddingProvider (Google, mock) (D54)
-  brain/               the knowledge store: migrations, repositories, access scopes, hybrid search, export (docs/brain/)
-  brain-api/           the brain's HTTP API, pages host, Mattermost callbacks, sign-in, embedding worker, Mattermost setup
+  brain/               the knowledge store: migrations, repositories, access scopes, hybrid search, files, export and its round trip (docs/brain/)
+  brain-api/           the brain's HTTP API (containers, people, systems, documents, tasks, search, export), pages host,
+                       Mattermost callbacks (/brain, /project, /topic, /task), sign-in, workers (embedding, extraction), jobs, Mattermost setup
   brain-web/           the pages (React, Vite, FormatJS catalog in src/i18n/en.json)
   bridge/              Mattermost <-> Buzz mirror, capture sweep (D50), dead-letter tool (third_party/: emoji-datasource notice)
   agent-runtime/       agent registry, dispatcher, context assembly, provisioning
@@ -86,7 +87,7 @@ packages/
 scripts/
   lib/                 env file, Mattermost and relay helpers for scripts
   dev/                 dev:up, dev:down, dev:seed
-  brain/               brain:bench (NFR-1 measurement)
+  brain/               brain:bench (NFR-1 measurement), brain:export (NFR-9)
   install/             the installer that runs inside the services image (init, seed, selftest)
   spike/               one spike per assumption plus the Phase 0 acceptance checks; B1-B6 for the brain
   gen/                 generated sources (emoji table)
@@ -118,6 +119,7 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm brain:setup` | Register the brain with Mattermost again (allow-list, OAuth app, `/brain` command); idempotent |
 | `pnpm brain:api-docs [--check]` | Regenerate `docs/brain/API.md` from the routes (CI checks it is current) |
 | `pnpm brain:bench [--chunks N] [--clean]` | Seed synthetic chunks and measure search latency (NFR-1) |
+| `pnpm brain:export <dir> [--verify]` | Write every table and the uploaded files to a directory; `--verify` imports them into a temporary database and compares (NFR-9) |
 | `./install/brain init \| up \| status \| test` | A customer installation from a machine with only Docker (install/README.md); `test` is the clean-install gate |
 | `pnpm ingest:purge --channel <relay channel id> \| --author <pubkey>` | Remove a channel's or an author's content from the brain and keep it out |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` (Team Edition's cap) and `X3` (no cap) create about 250 Mattermost users, so they run only when named. |
