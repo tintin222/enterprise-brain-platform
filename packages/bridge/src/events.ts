@@ -26,6 +26,8 @@ export interface PostEventInput {
   post: Pick<MmPost, 'id' | 'message' | 'create_at'>;
   /** The mirrored text, when it differs from the message (attachments). */
   content?: string | undefined;
+  /** The post's attachments, as `mm_file` tags, so the brain can fetch them (FR-5.6; files stay in Mattermost). */
+  files?: { id: string; name: string; mime_type?: string | undefined; size?: number | undefined }[] | undefined;
   /** Relay event id of the thread root, for replies. Mattermost threads are flat. */
   rootEventId?: string | undefined;
   mentionPubkeys: string[];
@@ -40,6 +42,7 @@ export function buildPostEvent(input: PostEventInput): UnsignedEvent {
   tags.push(['mm', input.post.id], ['mm_ts', String(input.post.create_at)]);
   for (const pubkey of new Set(input.mentionPubkeys)) tags.push(['p', pubkey]);
   if (input.backfill) tags.push(['backfill', '1']);
+  for (const file of input.files ?? []) tags.push(['mm_file', file.id, file.name, file.mime_type ?? '', String(file.size ?? 0)]);
   return { kind: 9, tags, content: input.content ?? input.post.message, created_at: chooseCreatedAt(input.post.create_at, input.nowMs) };
 }
 

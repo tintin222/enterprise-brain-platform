@@ -5,9 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { BrainStoreError, type BrainStore, type FileStore } from '@brain/brain';
-import type { EmbeddingProvider } from '@brain/models';
+import type { EmbeddingProvider, OcrProvider } from '@brain/models';
 import { errorFields, metricsRegistry, type ChatClient, type KeyStore, type Logger, type Pool, type RelayClient, type Signer } from '@brain/shared';
 import fastifyCookie from '@fastify/cookie';
+import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifySwagger from '@fastify/swagger';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -16,11 +17,17 @@ import { AccessError, type AccessService } from './access.ts';
 import { registerAuth, requireAdmin } from './auth.ts';
 import { ChannelLinker } from './channels.ts';
 import type { BrainApiConfig } from './config.ts';
+import { DocumentService } from './documents.ts';
 import type { JobRunner } from './jobs.ts';
 import type { PeopleService } from './people.ts';
 import { registerBrainRoutes } from './routes-brain.ts';
 import { registerMattermostRoutes } from './routes-mm.ts';
+import { registerDocumentRoutes } from './routes-documents.ts';
 import { registerPeopleRoutes } from './routes-people.ts';
+import { registerSystemRoutes } from './routes-systems.ts';
+import { registerTaskRoutes } from './routes-tasks.ts';
+import { SystemService } from './systems.ts';
+import { TaskService } from './tasks.ts';
 import { registerWorkspaceRoutes } from './routes-workspaces.ts';
 import { WorkspaceService } from './workspaces.ts';
 import type { TokenSigner } from './sessions.ts';
@@ -31,6 +38,8 @@ export interface BrainApiDeps {
   store: BrainStore;
   /** Undefined keeps search keyword-only (D53). */
   embeddings: EmbeddingProvider | undefined;
+  /** Reads scans and images (D65); undefined leaves such files searchable by name only. */
+  ocr?: OcrProvider | undefined;
   /** As the @brain bot. */
   chat: ChatClient;
   /** As an admin user (D25): agents, OAuth apps, commands, settings. */
@@ -44,8 +53,10 @@ export interface BrainApiDeps {
   people: PeopleService;
   files: FileStore;
   jobs: JobRunner;
-  /** Set by buildApp: the Project and Topic service, for the jobs registered after the app is built. */
+  /** Set by buildApp: the Project and Topic service and the document service, for the jobs and workers started after the app is built. */
   workspaces?: WorkspaceService;
+  documents?: DocumentService;
+  tasks?: TaskService;
   botUserId: string;
   teamName: string;
   log: Logger;
@@ -72,6 +83,7 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
     done(null, Object.fromEntries(new URLSearchParams(body as string)));
   });
   await app.register(fastifyCookie);
+  await app.register(fastifyMultipart, { limits: { fileSize: config.BRAIN_FILE_MAX_MB * 1024 * 1024, files: 1, fields: 20 } });
   await app.register(fastifySwagger, {
     openapi: {
       openapi: '3.1.0',
@@ -112,13 +124,20 @@ export async function buildApp(deps: BrainApiDeps): Promise<FastifyInstance> {
   const linker = new ChannelLinker({ store: deps.store, chat: deps.chat, access: deps.access, botUserId: deps.botUserId, publicUrl: config.BRAIN_PUBLIC_URL, log });
   const workspaces = new WorkspaceService({ store: deps.store, chat: deps.chat, adminChat: deps.adminChat, access: deps.access, people: deps.people, linker, botUserId: deps.botUserId, teamName: deps.teamName, publicUrl: config.BRAIN_PUBLIC_URL, staleDays: config.BRAIN_STALE_DAYS, log });
   deps.workspaces = workspaces;
+  const documents = new DocumentService({ store: deps.store, files: deps.files, chat: deps.chat, log, ocr: deps.ocr, ocrEnabled: config.BRAIN_FEATURE_OCR_MODEL, maxBytes: config.BRAIN_FILE_MAX_MB * 1024 * 1024, publicUrl: config.BRAIN_PUBLIC_URL, botUserId: deps.botUserId });
+  deps.documents = documents;
+  const tasks = new TaskService({ store: deps.store, chat: deps.chat, people: deps.people, tokens: deps.tokens, log, botUserId: deps.botUserId, publicUrl: config.BRAIN_PUBLIC_URL, internalUrl: config.BRAIN_INTERNAL_URL, timeZone: config.BRAIN_TIMEZONE });
+  deps.tasks = tasks;
   await app.register((api, _options, done) => {
     registerBrainRoutes(api, deps, linker);
     registerPeopleRoutes(api, deps);
     registerWorkspaceRoutes(api, deps, workspaces);
+    registerDocumentRoutes(api, deps, documents);
+    registerSystemRoutes(api, deps, new SystemService(deps.store));
+    registerTaskRoutes(api, deps, tasks);
     done();
   }, { prefix: API_PREFIX });
-  registerMattermostRoutes(app, deps, linker, workspaces);
+  registerMattermostRoutes(app, deps, linker, workspaces, tasks);
 
   // Operations endpoints, as the other services have them (docs/operations.md section 1).
   app.get('/healthz', { schema: { hide: true } }, () => ({ ok: true }));

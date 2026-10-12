@@ -148,6 +148,21 @@ export interface MyChannel {
   containerId: string | null;
 }
 
+export interface SystemView {
+  system: Entity;
+  artifacts: EntitySummary[];
+  integrations: { link: Link; other: EntitySummary; direction: 'outgoing' | 'incoming' }[];
+  containers: Container[];
+}
+
+export interface Diff {
+  from: number;
+  to: number;
+  title: { before: string; after: string } | null;
+  fields: { field: string; before: unknown; after: unknown }[];
+  text: { changed: boolean; hunks: { kind: 'same' | 'added' | 'removed'; text: string }[][] };
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -193,7 +208,7 @@ export const brain = {
   versions: (id: string) => api<{ versions: Version[] }>(`/entities/${encodeURIComponent(id)}/versions`),
   links: (id: string) => api<{ outgoing: Link[]; incoming: Link[] }>(`/entities/${encodeURIComponent(id)}/links`),
   backlinks: (id: string) => api<{ links: Link[]; mentions: SearchResult[] }>(`/entities/${encodeURIComponent(id)}/backlinks`),
-  search: (params: Record<string, string>) => api<{ results: SearchResult[]; semantic: boolean; tookMs: number }>(`/search?${new URLSearchParams(params)}`),
+  search: (params: Record<string, string>) => api<{ results: SearchResult[]; semantic: boolean; tookMs: number; facets: { types: Record<string, number>; containers: Record<string, number> } }>(`/search?${new URLSearchParams(params)}`),
   // Projects and Topics (FR-1)
   home: (id: string) => api<Home>(`/containers/${encodeURIComponent(id)}/home`),
   createProject: (body: Record<string, unknown>) => api<{ container: Container; channels: { id: string; name: string }[] }>('/projects', { method: 'POST', body: JSON.stringify(body) }),
@@ -202,6 +217,36 @@ export const brain = {
   moveItems: (topicId: string, body: { projectId: string; entityIds: string[]; mode: 'move' | 'link' }) => api<{ moved: string[]; linked: string[]; skipped: string[] }>(`/topics/${encodeURIComponent(topicId)}/move-items`, { method: 'POST', body: JSON.stringify(body) }),
   setTimeline: (id: string, milestones: Milestone[]) => api<{ container: Container }>(`/containers/${encodeURIComponent(id)}/timeline`, { method: 'PATCH', body: JSON.stringify({ milestones }) }),
   myChannels: () => api<{ channels: MyChannel[] }>('/me/channels'),
+  // Systems (FR-3)
+  systems: (params: Record<string, string> = {}) => api<{ systems: EntitySummary[] }>(`/systems?${new URLSearchParams(params)}`),
+  system: (id: string) => api<SystemView>(`/systems/${encodeURIComponent(id)}`),
+  createSystem: (body: Record<string, unknown>) => api<{ system: Entity }>('/systems', { method: 'POST', body: JSON.stringify(body) }),
+  updateSystem: (id: string, body: Record<string, unknown>) => api<{ system: Entity }>(`/systems/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  linkSystem: (id: string, containerId: string) => api<{ link: Link }>(`/systems/${encodeURIComponent(id)}/containers`, { method: 'POST', body: JSON.stringify({ containerId }) }),
+  addIntegration: (id: string, body: Record<string, unknown>) => api<{ link: Link }>(`/systems/${encodeURIComponent(id)}/integrations`, { method: 'POST', body: JSON.stringify(body) }),
+  diff: (id: string, a: number, b: number) => api<Diff>(`/entities/${encodeURIComponent(id)}/versions/${a}/diff/${b}`),
+  // Tasks (FR-11)
+  containerTasks: (containerId: string) => api<{ tasks: EntitySummary[] }>(`/containers/${encodeURIComponent(containerId)}/tasks`),
+  myTasks: (includeClosed = false) => api<{ tasks: EntitySummary[] }>(`/tasks/mine?includeClosed=${includeClosed}`),
+  createTask: (body: Record<string, unknown>) => api<{ task: Entity }>('/tasks', { method: 'POST', body: JSON.stringify(body) }),
+  updateTask: (id: string, body: Record<string, unknown>) => api<{ task: Entity }>(`/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  commentTask: (id: string, text: string) => api<{ task: Entity }>(`/tasks/${encodeURIComponent(id)}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
+  decideTask: (id: string, decision: 'accept' | 'edit' | 'dismiss', body?: Record<string, unknown>) => api<{ task: Entity }>(`/tasks/${encodeURIComponent(id)}/${decision}`, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) }),
+  // Documents (FR-5)
+  documents: (params: Record<string, string> = {}) => api<{ documents: EntitySummary[] }>(`/documents?${new URLSearchParams(params)}`),
+  uploadDocument: async (file: File, fields: Record<string, string>) => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) form.append(key, value);
+    form.append('file', file, file.name);
+    const response = await fetch(`${BASE}/documents`, { method: 'POST', body: form, headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' });
+    const body = (await response.json().catch(() => null)) as { document?: Entity; error?: string } | null;
+    if (!response.ok) throw new ApiError(response.status, body?.error ?? `HTTP ${response.status}`);
+    return body as { document: Entity; created: boolean };
+  },
+  documentText: (id: string) => api<{ text: string; extracted: Record<string, unknown> }>(`/documents/${encodeURIComponent(id)}/text`),
+  documentFileUrl: (id: string) => `${BASE}/documents/${encodeURIComponent(id)}/file`,
+  setDocumentFlags: (id: string, body: Record<string, unknown>) => api<{ document: Entity }>(`/documents/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  extractDocument: (id: string) => api<{ extracted: Record<string, unknown> }>(`/documents/${encodeURIComponent(id)}/extract`, { method: 'POST' }),
   // People (FR-2)
   people: (params: Record<string, string> = {}) => api<{ people: EntitySummary[] }>(`/people?${new URLSearchParams(params)}`),
   person: (id: string) => api<PersonDetail>(`/people/${encodeURIComponent(id)}`),

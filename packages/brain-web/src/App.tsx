@@ -74,6 +74,12 @@ export function App() {
           <Link to="/people">
             <FormattedMessage id="nav.people" />
           </Link>
+          <Link to="/systems">
+            <FormattedMessage id="nav.systems" />
+          </Link>
+          <Link to="/tasks">
+            <FormattedMessage id="nav.tasks" />
+          </Link>
         </nav>
         <SearchBox />
         {me && (

@@ -32,6 +32,17 @@ export interface BrainDocument {
   sourceUrl?: string | undefined;
   eventIds: string[];
   anchors?: MessageAnchor[] | undefined;
+  /** Attachments of the thread's posts (FR-5.6), from the bridge's `mm_file` tags; the brain fetches them. */
+  files?: DocumentFile[] | undefined;
+}
+
+export interface DocumentFile {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  postId?: string | undefined;
+  eventId: string;
 }
 
 export interface BrainSearchInput {

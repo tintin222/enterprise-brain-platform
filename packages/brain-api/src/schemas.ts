@@ -223,6 +223,74 @@ export const homeOut = z.object({
   spawnedFrom: containerOut.nullable(),
 });
 
+// --- documents (FR-5) ---
+
+export const documentFlagsIn = z.object({
+  useAsContext: z.boolean().optional(),
+  confidential: z.boolean().optional(),
+  noAi: z.boolean().optional(),
+  allowedPersonIds: z.array(id).max(100).optional(),
+  artifact: z.enum(['ddl', 'er_diagram', 'openapi', 'wsdl', 'postman', 'other']).optional(),
+});
+
+// --- systems (FR-3) ---
+
+const environmentIn = z.object({ name: z.string().trim().min(1).max(60), url: z.string().trim().max(500).optional(), notes: z.string().trim().max(1000).optional() });
+const stringList = (max: number) => z.array(z.string().trim().min(1).max(500)).max(max);
+export const systemIn = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(10_000).optional(),
+  businessOwnerId: id.optional(),
+  technicalOwnerId: id.optional(),
+  stack: stringList(50).optional(),
+  environments: z.array(environmentIn).max(20).optional(),
+  repositories: stringList(50).optional(),
+  deployment: z.string().trim().max(2000).optional(),
+  containerIds: z.array(id).max(50).optional(),
+});
+export const systemPatchIn = systemIn.omit({ containerIds: true, title: true }).extend({
+  title: z.string().trim().min(1).max(200).optional(),
+  inventory: z.object({ screens: stringList(500).optional(), modules: stringList(500).optional(), knownIssues: stringList(500).optional(), painPoints: stringList(500).optional() }).optional(),
+});
+export const integrationIn = z.object({ toSystemId: id, protocol: z.string().trim().max(120).optional(), payload: z.string().trim().max(2000).optional(), direction: z.enum(['calls', 'is_called_by', 'both']).optional(), notes: z.string().trim().max(2000).optional() });
+export const systemViewOut = z.object({
+  system: entityOut,
+  artifacts: z.array(entitySummaryOut),
+  integrations: z.array(z.object({ link: linkOut, other: entitySummaryOut, direction: z.enum(['outgoing', 'incoming']) })),
+  containers: z.array(containerOut),
+});
+export const diffOut = z.object({
+  from: z.number(),
+  to: z.number(),
+  title: z.object({ before: z.string(), after: z.string() }).nullable(),
+  fields: z.array(z.object({ field: z.string(), before: z.unknown(), after: z.unknown() })),
+  text: z.object({ changed: z.boolean(), hunks: z.array(z.array(z.object({ kind: z.enum(['same', 'added', 'removed']), text: z.string() }))) }),
+});
+
+// --- tasks (FR-11) ---
+
+export const taskState = z.enum(['open', 'in_progress', 'done', 'dismissed']);
+export const taskPriority = z.enum(['low', 'normal', 'high']);
+export const evidenceIn = z.object({ kind: z.enum(['post', 'entity', 'url', 'mail']), ref: z.string().min(1).max(500), url: z.string().max(2000).optional(), title: z.string().max(500).optional() });
+export const taskIn = z.object({
+  title: z.string().trim().min(1).max(500),
+  containerId: id.optional(),
+  text: z.string().max(20_000).optional(),
+  assigneeId: id.optional(),
+  dueAt: z.iso.date().optional(),
+  priority: taskPriority.optional(),
+  evidence: z.array(evidenceIn).max(20).optional(),
+});
+export const taskPatchIn = z.object({
+  title: z.string().trim().min(1).max(500).optional(),
+  text: z.string().max(20_000).optional(),
+  assigneeId: id.nullable().optional(),
+  dueAt: z.iso.date().nullable().optional(),
+  priority: taskPriority.optional(),
+  state: taskState.optional(),
+  snoozedUntil: z.iso.date().nullable().optional(),
+});
+
 export const createAgentIn = z.object({
   handle: z.string().regex(/^[a-z][a-z0-9._-]{2,21}$/, '3-22 characters: lowercase letters, digits, ".", "-", "_"'),
   name: z.string().trim().min(1).max(64),
@@ -247,6 +315,8 @@ export const commandBody = z.object({
   text: z.string().optional().default(''),
   trigger_id: z.string().optional(),
   response_url: z.string().optional(),
+  /** The thread the command was typed in, when it was (the thread root's post id). */
+  root_id: z.string().optional(),
 });
 
 /** A dialog submission (JSON; spike B1). */

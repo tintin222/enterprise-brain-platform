@@ -1,6 +1,6 @@
 // Thread documents (docs/agents-and-ingestion.md B.2): a thread rendered as "Author: message" lines in time
 // order, split into overlapping chunks when long. Pure functions.
-import { messageTimeMs, tagValue, threadDocId, threadOrder, type BrainDocument, type MessageAnchor, type NostrEvent } from '@brain/shared';
+import { messageTimeMs, tagValue, threadDocId, threadOrder, type BrainDocument, type DocumentFile, type MessageAnchor, type NostrEvent } from '@brain/shared';
 
 export type ThreadMessage = Pick<NostrEvent, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>;
 
@@ -57,6 +57,11 @@ export function buildThreadDocuments(input: ThreadDocumentInput): BrainDocument[
       const postId = tagValue(message, 'mm');
       return { eventId: message.id, author: message.pubkey, at: new Date(messageTimeMs(message)), postId, url: postId && input.permalink ? input.permalink(postId) : undefined };
     });
+    const files: DocumentFile[] = part.flatMap((message) =>
+      message.tags
+        .filter((tag) => tag[0] === 'mm_file' && tag[1])
+        .map((tag) => ({ id: tag[1]!, name: tag[2] ?? tag[1]!, mediaType: tag[3] ?? '', size: Number(tag[4] ?? 0), postId: tagValue(message, 'mm'), eventId: message.id })),
+    );
     return {
       id: groups.length === 1 ? base : `${base}:${n}`,
       text: group.map((i) => lines[i]!).join('\n'),
@@ -68,6 +73,7 @@ export function buildThreadDocuments(input: ThreadDocumentInput): BrainDocument[
       sourceUrl: input.sourceUrl,
       eventIds: part.map((message) => message.id),
       anchors,
+      ...(files.length > 0 ? { files } : {}),
     };
   });
 }

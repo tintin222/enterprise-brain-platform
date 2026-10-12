@@ -96,6 +96,7 @@ export class PostgresBrainClient implements BrainClient {
           last_at: doc.lastAt.toISOString(),
           ...(doc.sourceUrl ? { source_url: doc.sourceUrl } : {}),
           ...(doc.anchors ? { anchors: doc.anchors.map((anchor) => ({ eventId: anchor.eventId, author: anchor.author, at: anchor.at.toISOString(), ...(anchor.postId ? { postId: anchor.postId } : {}), ...(anchor.url ? { url: anchor.url } : {}) })) } : {}),
+          ...(doc.files && doc.files.length > 0 ? { files: doc.files } : {}),
         },
       }));
       const { entity, changed } = await this.store.upsertEntityByExternalKey(

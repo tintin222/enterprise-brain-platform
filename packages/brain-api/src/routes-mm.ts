@@ -13,11 +13,12 @@ import type { ChannelLinker } from './channels.ts';
 import { COMMAND_TRIGGERS, secretCommandToken } from './mattermost-setup.ts';
 import { containerUrl } from './present.ts';
 import { actionBody, commandBody, dialogBody } from './schemas.ts';
+import type { TaskService } from './tasks.ts';
 import type { WorkspaceService } from './workspaces.ts';
 
 const STATE_SECONDS = 600;
 const SEARCH_RESULTS = 5;
-const DIALOGS = ['link', 'project', 'topic'] as const;
+const DIALOGS = ['link', 'project', 'topic', 'task', 'task-reassign'] as const;
 
 interface CommandResponse {
   response_type?: 'ephemeral' | 'in_channel';
@@ -30,9 +31,9 @@ type Submission = Record<string, string | boolean | number | null>;
 const str = (submission: Submission, key: string): string => (typeof submission[key] === 'string' ? submission[key].trim() : '');
 const bool = (submission: Submission, key: string): boolean => submission[key] === true || submission[key] === 'true';
 
-export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDeps, linker: ChannelLinker, workspaces: WorkspaceService): void {
+export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDeps, linker: ChannelLinker, workspaces: WorkspaceService, tasks: TaskService): void {
   const api = app.withTypeProvider<ZodTypeProvider>();
-  const { config, store, access, keyStore, tokens, chat, log } = deps;
+  const { config, store, access, keyStore, tokens, chat, log, people } = deps;
   const publicUrl = config.BRAIN_PUBLIC_URL.replace(/\/$/, '');
   const internalUrl = config.BRAIN_INTERNAL_URL.replace(/\/$/, '');
   const ephemeral = (text: string): CommandResponse => ({ response_type: 'ephemeral', text });
@@ -50,6 +51,7 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
     '- `/project new [title]`: create a project with its three channels; `/project new --from-topic` spawns it from a topic.',
     '- `/project archive`: archive the project this channel belongs to.',
     '- `/topic here`: make this channel a topic; `/topic new`: start a new topic channel.',
+    '- `/task <title>`: make a task from this thread or channel (typed in a thread, the thread is its evidence); `/task` alone opens a form; `/task mine` lists yours.',
     `- Pages: ${publicUrl}`,
   ].join('\n');
 
@@ -157,6 +159,46 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
     return openDialog(body, 'topic', { title: 'New topic', introduction_text: 'Creates the topic and a channel for it.', elements: topicElements(argument, true), submit_label: 'Create topic' }, { mode: 'new' });
   }
 
+  // --- /task (FR-11.1) ---
+
+  async function taskContainerFor(channelId: string): Promise<string> {
+    const link = await store.channelLinkByMm(channelId);
+    return link?.containerId ?? 'general';
+  }
+
+  async function taskCreateCommand(principal: Principal, body: CommandBody, title: string, requestId: string): Promise<CommandResponse> {
+    const postId = body.root_id || undefined;
+    const evidence = postId ? await tasks.evidenceFromPost(postId, body.team_domain ?? deps.teamName) : undefined;
+    if (!title) {
+      return openDialog(body, 'task', {
+        title: 'New task',
+        introduction_text: evidence ? `Evidence: "${evidence.title ?? ''}"` : 'A task in this channel\'s project or topic.',
+        elements: [
+          { display_name: 'What has to be done', name: 'title', type: 'text', max_length: 500 },
+          { display_name: 'Who', name: 'assignee', type: 'select', data_source: 'users', optional: true, default: body.user_id },
+          { display_name: 'Due (YYYY-MM-DD)', name: 'dueAt', type: 'text', optional: true, placeholder: new Date().toISOString().slice(0, 10) },
+          { display_name: 'Priority', name: 'priority', type: 'select', default: 'normal', options: [{ text: 'Low', value: 'low' }, { text: 'Normal', value: 'normal' }, { text: 'High', value: 'high' }] },
+        ],
+        submit_label: 'Create task',
+      }, { postId: postId ?? null });
+    }
+    const person = principal.kind === 'person' && principal.personId ? principal.personId : (await people.ensurePerson(body.user_id)).id;
+    const task = await tasks.create({ title, containerId: await taskContainerFor(body.channel_id), assigneeId: person, evidence: evidence ? [evidence] : [] }, chatCtx(principal, requestId, postId ?? body.channel_id));
+    return ephemeral(`Task created: **${task.title}** (assigned to you). ${publicUrl}/entities/${task.id}`);
+  }
+
+  async function taskMineCommand(principal: Principal): Promise<CommandResponse> {
+    const personId = principal.kind === 'person' ? principal.personId : undefined;
+    const mine = personId ? await tasks.mine(personId) : [];
+    if (mine.length === 0) return ephemeral(`You have no open tasks. ${publicUrl}/tasks`);
+    const lines = mine.slice(0, 15).map((task) => {
+      const due = typeof task.data.dueAt === 'string' ? ` · due ${task.data.dueAt.slice(0, 10)}` : '';
+      const state = typeof task.data.state === 'string' ? task.data.state : 'open';
+      return `- **${task.title}**${due} · ${state} [open](${publicUrl}/entities/${task.id})`;
+    });
+    return ephemeral(`Your open tasks (${mine.length}):\n${lines.join('\n')}\n[All tasks](${publicUrl}/tasks)`);
+  }
+
   // --- the command endpoint ---
 
   api.post('/mm/commands/:trigger', { schema: { tags: ['Mattermost'], summary: 'A slash command (/brain, /project, /topic; form body from Mattermost)', params: z.object({ trigger: z.enum(COMMAND_TRIGGERS as [string, ...string[]]) }), body: commandBody, hide: false } }, async (request, reply) => {
@@ -184,6 +226,12 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
         if (sub === 'here') return await topicHereCommand(body);
         if (sub === 'new') return await topicNewCommand(body, argument);
         return ephemeral(help);
+      }
+      if (trigger === 'task') {
+        if (!config.BRAIN_FEATURE_TASKS) return ephemeral('Tasks are switched off on this installation.');
+        if (sub === 'mine') return await taskMineCommand(principal);
+        if (sub === 'help') return ephemeral(help);
+        return await taskCreateCommand(principal, body, body.text.trim(), request.id);
       }
       return ephemeral(help);
     } catch (error) {
@@ -222,6 +270,30 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
           await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Created the project **${container.title}** with ${channels.map((channel) => `~${channel.name}`).join(', ')}. ${containerUrl({ publicUrl }, container.id)}` }).catch(() => undefined);
           return {};
         }
+        case 'task': {
+          const title = str(submission, 'title');
+          if (!title) return { errors: { title: 'Say what has to be done' } };
+          const dueAt = str(submission, 'dueAt');
+          if (dueAt && !/^\d{4}-\d{2}-\d{2}$/.test(dueAt)) return { errors: { dueAt: 'Use YYYY-MM-DD' } };
+          const assigneeUser = str(submission, 'assignee') || body.user_id;
+          const assignee = await people.ensurePerson(assigneeUser);
+          const postId = typeof verified.data.postId === 'string' ? verified.data.postId : undefined;
+          const evidence = postId ? await tasks.evidenceFromPost(postId, body.team_id) : undefined;
+          const priority = str(submission, 'priority');
+          const task = await tasks.create({ title, containerId: await taskContainerFor(body.channel_id), assigneeId: assignee.id, ...(dueAt ? { dueAt } : {}), priority: priority === 'low' || priority === 'high' ? priority : 'normal', evidence: evidence ? [evidence] : [] }, ctx);
+          await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: `Task created: **${task.title}** for ${assignee.title}. ${publicUrl}/entities/${task.id}` }).catch(() => undefined);
+          return {};
+        }
+        case 'task-reassign': {
+          const taskId = typeof verified.data.taskId === 'string' ? verified.data.taskId : '';
+          const task = await store.getEntity(taskId);
+          if (!task || task.type !== 'task') return { error: 'The task no longer exists' };
+          const toUser = str(submission, 'assignee');
+          if (!toUser) return { errors: { assignee: 'Choose who takes the task' } };
+          const text = await tasks.act(task, 'task-reassign', { assignee: toUser }, principal, ctx);
+          await chat.createEphemeralPost(body.user_id, { channel_id: body.channel_id, message: text }).catch(() => undefined);
+          return {};
+        }
         case 'topic': {
           const title = str(submission, 'title');
           if (!title) return { errors: { title: 'Give the topic a name' } };
@@ -240,8 +312,30 @@ export function registerMattermostRoutes(app: FastifyInstance, deps: BrainApiDep
   api.post('/mm/actions/:name', { schema: { tags: ['Mattermost'], summary: 'A button on a post (JSON from Mattermost); the context carries a signed state', params: z.object({ name: z.string().min(1) }), body: actionBody } }, async (request, reply) => {
     const body = request.body;
     const verified = tokens.verify(typeof body.context.state === 'string' ? body.context.state : undefined, 'state');
-    if (!verified || verified.data?.purpose !== request.params.name) return reply.code(401).send({ error: 'Unknown or expired action', code: 'unauthorized' });
-    // Tasks (Phase 1 T1.6) and proposals (Phase 2) answer here.
+    const purpose = request.params.name.startsWith('task-') ? 'task' : request.params.name;
+    if (!verified || verified.data?.purpose !== purpose || verified.uid !== body.user_id) return reply.code(401).send({ error: 'Unknown or expired action', code: 'unauthorized' });
+    if (purpose === 'task') {
+      const taskId = typeof verified.data.taskId === 'string' ? verified.data.taskId : '';
+      const task = await store.getEntity(taskId);
+      if (!task || task.type !== 'task') return { ephemeral_text: 'The task no longer exists.' };
+      const principal = await personFor(body.user_id);
+      if (request.params.name === 'task-reassign') {
+        if (!body.trigger_id) return { ephemeral_text: 'This Mattermost does not send trigger ids.' };
+        await chat.openDialog({
+          trigger_id: body.trigger_id,
+          url: `${internalUrl}/mm/dialogs/task-reassign`,
+          dialog: { callback_id: 'task-reassign', title: `Reassign: ${task.title.slice(0, 40)}`, elements: [{ display_name: 'Who takes it', name: 'assignee', type: 'select', data_source: 'users' }], submit_label: 'Reassign', notify_on_cancel: false, state: tokens.sign({ uid: body.user_id, exp: nowSeconds() + STATE_SECONDS, use: 'state', data: { purpose: 'task-reassign', channel: body.channel_id, team: body.team_id, taskId: task.id } }) },
+        });
+        return {};
+      }
+      try {
+        const text = await tasks.act(task, request.params.name, body.context, principal, chatCtx(principal, request.id, body.post_id));
+        return { ephemeral_text: text };
+      } catch (error) {
+        return { ephemeral_text: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    // Proposals (Phase 2) answer here.
     return { ephemeral_text: `Nothing to do for "${request.params.name}" yet.` };
   });
 

@@ -16,6 +16,7 @@ export const COMMANDS: { trigger: string; displayName: string; description: stri
   { trigger: 'brain', displayName: 'Enterprise Brain', description: 'Search the brain, or link this channel to a project or topic', hint: 'search <words> | link | help' },
   { trigger: 'project', displayName: 'Project', description: 'Create a project with its channels, or archive one', hint: 'new [--from-topic] | archive | help' },
   { trigger: 'topic', displayName: 'Topic', description: 'Make this channel a topic, or start a new topic channel', hint: 'here | new | help' },
+  { trigger: 'task', displayName: 'Task', description: 'Make a task from this thread or message, or see your tasks', hint: '<title> | mine | help' },
 ];
 export const COMMAND_TRIGGERS = COMMANDS.map((command) => command.trigger);
 

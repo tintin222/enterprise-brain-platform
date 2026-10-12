@@ -95,6 +95,8 @@ try {
   // Random vectors are not unit length; cosine distance does not care, but normalise for realism once.
   if (entitiesWanted > entitiesPresent) await pool.query('UPDATE brain.chunks SET embedding = l2_normalize(embedding) WHERE container_id = $1 AND embedding_model = $2', [bench.id, 'bench']);
   await pool.query('ANALYZE brain.chunks');
+  const lexemes = await store.refreshLexemeStats();
+  console.log(`lexeme statistics refreshed: ${lexemes} lexemes`);
   const total = Number((await pool.query<{ n: string }>('SELECT count(*) AS n FROM brain.chunks')).rows[0]?.n ?? 0);
   console.log(`total chunks in the store: ${total} (seeding took ${Math.round((Date.now() - started) / 1000)} s)`);
 

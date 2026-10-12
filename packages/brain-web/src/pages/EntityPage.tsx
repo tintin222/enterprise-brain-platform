@@ -3,6 +3,10 @@ import { FormattedMessage, useIntl } from 'react-intl';
 import { Link, useParams } from 'react-router';
 import { brain, type Version } from '../api.ts';
 import { ErrorLine, useAsync, when } from '../App.tsx';
+import { DocumentPanel } from './DocumentPanel.tsx';
+import { SystemPanel } from './SystemPanel.tsx';
+import { VersionDiff } from './VersionDiff.tsx';
+import { UploadForm } from './UploadForm.tsx';
 
 /** Which fields differ between two versions (title, status, data keys, text). */
 function changedFields(current: Version, previous: Version | undefined): string[] {
@@ -107,6 +111,24 @@ export function EntityPage() {
             </p>
           )}
           <div className="grid">
+            {entity.type === 'system' && <SystemPanel entity={entity} onChange={() => detail.reload()} />}
+            {entity.type === 'document' && (
+              <DocumentPanel
+                entity={entity}
+                onChange={() => {
+                  detail.reload();
+                  versions.reload();
+                }}
+              />
+            )}
+            {(entity.type === 'system' || entity.type === 'person' || entity.type === 'requirement') && !entity.archivedAt && (
+              <section className="card">
+                <h2>
+                  <FormattedMessage id="home.documents" />
+                </h2>
+                <UploadForm attachTo={entity.id} artifacts={entity.type === 'system'} onDone={() => backlinks.reload()} />
+              </section>
+            )}
             <section className="card">
               <h2>
                 <FormattedMessage id="entity.fields" />
@@ -188,6 +210,7 @@ export function EntityPage() {
             <h2>
               <FormattedMessage id="entity.versions" />
             </h2>
+            {versions.data && <VersionDiff entityId={id} versions={versions.data.versions} />}
             <ErrorLine error={versions.error} />
             <ul className="plain">
               {versions.data?.versions.map((version, index, all) => {

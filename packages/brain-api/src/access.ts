@@ -76,6 +76,12 @@ export class AccessService {
   async canSeeEntity(principal: Principal, entity: Entity): Promise<boolean> {
     const scope = await this.scope(principal);
     if (scope.kind === 'all') return true;
+    // A confidential document (FR-5.5) is for its uploader, administrators and the people it names, members or not.
+    if (entity.type === 'document' && entity.data.confidential === true) {
+      if (principal.kind !== 'person') return false;
+      const allowed = Array.isArray(entity.data.allowedPersonIds) ? (entity.data.allowedPersonIds as string[]) : [];
+      return entity.createdBy === principal.userId || (principal.personId !== undefined && allowed.includes(principal.personId));
+    }
     if (scope.kind === 'channel') return entity.channelId === scope.channelId || entity.visibility === 'public';
     switch (entity.visibility) {
       case 'public':

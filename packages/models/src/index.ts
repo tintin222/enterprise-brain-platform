@@ -3,6 +3,7 @@ export { AnthropicProvider, type AnthropicProviderOptions, type Effort } from '.
 export { ECHO_MODEL, EchoProvider } from './echo.ts';
 export { cosine, GeminiEmbeddingProvider, mockEmbedding, MockEmbeddingProvider, normalize, type GeminiEmbeddingApi, type GeminiEmbeddingOptions } from './embeddings.ts';
 export { GeminiProvider, type GeminiModelsApi, type GeminiProviderOptions, type GeminiResponse } from './gemini.ts';
+export { FakeOcrProvider, GeminiOcrProvider, ocrProviderFromConfig, type OcrProvider } from './ocr.ts';
 export { estimateCostUsd, parsePriceTable, type ModelPrice, type PriceTable } from './prices.ts';
 export { systemPrompt, userMessage, type SystemPromptInput } from './prompt.ts';
 export { embeddingProviderFromConfig, LlmProviders, modelConfigSchema, type ModelConfig } from './providers.ts';

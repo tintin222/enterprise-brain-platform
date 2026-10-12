@@ -20,6 +20,9 @@ Errors are `{ "error": "<message>", "code": "<code>" }`; validation errors add `
 - [People](#people)
 - [Projects](#projects)
 - [Topics](#topics)
+- [Documents](#documents)
+- [Systems](#systems)
+- [Tasks](#tasks)
 
 ## Session
 
@@ -485,13 +488,40 @@ Response 200:
 | --- | --- | --- |
 | `removed` | boolean | yes |
 
+### `GET /api/v1/brain/entities/{id}/versions/{a}/diff/{b}`
+
+What changed between two versions: text lines and data fields (FR-3.6)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+| `a` | path | integer | yes |
+| `b` | path | integer | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `from` | number | yes |
+| `to` | number | yes |
+| `title` | object \| null | yes |
+| `fields` | array of object | yes |
+| `text` | object | yes |
+
+Response 404:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | string | yes |
+| `code` | string | no |
+
 ## Search
 
 Hybrid search (FR-9.1, FR-9.2)
 
 ### `GET /api/v1/brain/search`
 
-Hybrid search over everything the caller may see, with citations
+Hybrid search over everything the caller may see, with citations and facets
 
 | Parameter | In | Type | Required |
 | --- | --- | --- | --- |
@@ -511,6 +541,7 @@ Response 200:
 | `results` | array of object | yes |
 | `semantic` | boolean | yes |
 | `tookMs` | number | yes |
+| `facets` | object | yes |
 
 ## Audit
 
@@ -678,7 +709,7 @@ A slash command (/brain, /project, /topic; form body from Mattermost)
 
 | Parameter | In | Type | Required |
 | --- | --- | --- | --- |
-| `trigger` | path | `brain` \| `project` \| `topic` | yes |
+| `trigger` | path | `brain` \| `project` \| `topic` \| `task` | yes |
 
 Body:
 
@@ -695,6 +726,7 @@ Body:
 | `text` | string | no |
 | `trigger_id` | string | no |
 | `response_url` | string | no |
+| `root_id` | string | no |
 
 Response 200: Default Response
 
@@ -704,7 +736,7 @@ A dialog submission (JSON from Mattermost)
 
 | Parameter | In | Type | Required |
 | --- | --- | --- | --- |
-| `name` | path | `link` \| `project` \| `topic` | yes |
+| `name` | path | `link` \| `project` \| `topic` \| `task` \| `task-reassign` | yes |
 
 Body:
 
@@ -1040,3 +1072,385 @@ Response 200:
 | `moved` | array of string | yes |
 | `linked` | array of string | yes |
 | `skipped` | array of string | yes |
+
+## Documents
+
+### `POST /api/v1/brain/documents`
+
+Upload a file to a container or an entity (multipart: file, attachTo, useAsContext, confidential, noAi, artifact, title, description)
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `document` | object | yes |
+| `created` | boolean | yes |
+
+### `GET /api/v1/brain/documents`
+
+Documents the caller may see, newest first
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `container` | query | string | no |
+| `attachedTo` | query | string | no |
+| `limit` | query | integer | no |
+| `offset` | query | integer | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `documents` | array of object | yes |
+
+### `GET /api/v1/brain/documents/{id}/text`
+
+A document's extracted text (confidential reads are audited)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `text` | string | yes |
+| `extracted` | object | yes |
+
+### `GET /api/v1/brain/documents/{id}/file`
+
+Download the file (audited)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200: Default Response
+
+### `PATCH /api/v1/brain/documents/{id}`
+
+Change the flags: use as context, confidential, no-ai, allowed people, artifact kind (FR-5.4, FR-5.5)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `useAsContext` | boolean | no |
+| `confidential` | boolean | no |
+| `noAi` | boolean | no |
+| `allowedPersonIds` | array of string | no |
+| `artifact` | `ddl` \| `er_diagram` \| `openapi` \| `wsdl` \| `postman` \| `other` | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `document` | object | yes |
+
+### `POST /api/v1/brain/documents/{id}/extract`
+
+Extract the text again now
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `extracted` | object | yes |
+
+## Systems
+
+### `GET /api/v1/brain/systems`
+
+Every system (installation-wide, FR-3.7)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `q` | query | string | no |
+| `container` | query | string | no |
+| `limit` | query | integer | no |
+| `offset` | query | integer | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `systems` | array of object | yes |
+
+### `POST /api/v1/brain/systems`
+
+Create a system (FR-3.1), optionally linked to Projects and Topics
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | yes |
+| `description` | string | no |
+| `businessOwnerId` | string | no |
+| `technicalOwnerId` | string | no |
+| `stack` | array of string | no |
+| `environments` | array of object | no |
+| `repositories` | array of string | no |
+| `deployment` | string | no |
+| `containerIds` | array of string | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `system` | object | yes |
+
+### `GET /api/v1/brain/systems/{id}`
+
+A system with its artifacts, integrations and the containers that use it
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `system` | object | yes |
+| `artifacts` | array of object | yes |
+| `integrations` | array of object | yes |
+| `containers` | array of object | yes |
+
+Response 404:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | string | yes |
+| `code` | string | no |
+
+### `PATCH /api/v1/brain/systems/{id}`
+
+Edit a system: description, owners, stack, environments, repositories, deployment, inventory (FR-3.1, FR-3.5)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `description` | string | no |
+| `businessOwnerId` | string | no |
+| `technicalOwnerId` | string | no |
+| `stack` | array of string | no |
+| `environments` | array of object | no |
+| `repositories` | array of string | no |
+| `deployment` | string | no |
+| `title` | string | no |
+| `inventory` | object | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `system` | object | yes |
+
+### `POST /api/v1/brain/systems/{id}/containers`
+
+Use the system in a Project or Topic (FR-3.7)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `containerId` | string | yes |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `link` | object | yes |
+
+### `DELETE /api/v1/brain/systems/{id}/containers/{containerId}`
+
+Stop using the system in a container
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+| `containerId` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `removed` | boolean | yes |
+
+### `POST /api/v1/brain/systems/{id}/integrations`
+
+Record that this system talks to another: protocol, data, direction (FR-3.4)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `toSystemId` | string | yes |
+| `protocol` | string | no |
+| `payload` | string | no |
+| `direction` | `calls` \| `is_called_by` \| `both` | no |
+| `notes` | string | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `link` | object | yes |
+
+## Tasks
+
+### `GET /api/v1/brain/containers/{id}/tasks`
+
+A container's tasks, open first, soonest due first
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `state` | query | `open` \| `in_progress` \| `done` \| `dismissed` | no |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `tasks` | array of object | yes |
+
+### `GET /api/v1/brain/tasks/mine`
+
+The caller's tasks across projects and topics, proposals included
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `includeClosed` | query | `true` \| `false` | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `tasks` | array of object | yes |
+
+### `POST /api/v1/brain/tasks`
+
+Create a task (one step: a title; everything else has a default)
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | yes |
+| `containerId` | string | no |
+| `text` | string | no |
+| `assigneeId` | string | no |
+| `dueAt` | string | no |
+| `priority` | `low` \| `normal` \| `high` | no |
+| `evidence` | array of object | no |
+
+Response 201:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task` | object | yes |
+
+### `GET /api/v1/brain/tasks/{id}`
+
+One task
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task` | object | yes |
+
+Response 404:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `error` | string | yes |
+| `code` | string | no |
+
+### `PATCH /api/v1/brain/tasks/{id}`
+
+Change a task: title, text, assignee, due date, priority, state, snooze
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `title` | string | no |
+| `text` | string | no |
+| `assigneeId` | string \| null | no |
+| `dueAt` | string \| null | no |
+| `priority` | `low` \| `normal` \| `high` | no |
+| `state` | `open` \| `in_progress` \| `done` \| `dismissed` | no |
+| `snoozedUntil` | string \| null | no |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task` | object | yes |
+
+### `POST /api/v1/brain/tasks/{id}/comments`
+
+Comment on a task
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+
+Body:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `text` | string | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task` | object | yes |
+
+### `POST /api/v1/brain/tasks/{id}/{decision}`
+
+Decide an agent's proposal: accept, edit (with changes) or dismiss (FR-11.3)
+
+| Parameter | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | yes |
+| `decision` | path | `accept` \| `edit` \| `dismiss` | yes |
+
+Response 200:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `task` | object | yes |

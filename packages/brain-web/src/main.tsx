@@ -13,6 +13,8 @@ import { HomePage } from './pages/HomePage.tsx';
 import { PeoplePage } from './pages/PeoplePage.tsx';
 import { PersonPage } from './pages/PersonPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
+import { SystemsPage } from './pages/SystemsPage.tsx';
+import { TasksPage } from './pages/TasksPage.tsx';
 import './styles.css';
 
 const router = createBrowserRouter([
@@ -27,6 +29,9 @@ const router = createBrowserRouter([
       { path: 'entities/:id', element: <EntityPage /> },
       { path: 'people', element: <PeoplePage /> },
       { path: 'people/:id', element: <PersonPage /> },
+      { path: 'systems', element: <SystemsPage /> },
+      { path: 'tasks', element: <TasksPage /> },
+      { path: 'containers/:id/tasks', element: <TasksPage /> },
     ],
   },
 ]);

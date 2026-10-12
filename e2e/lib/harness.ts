@@ -4,9 +4,9 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { AgentRuntime, EchoAgent, provisionAgent, providersFromConfig, runtimeConfigSchema, type AgentRecord, type ProvisionInput } from '@brain/agent-runtime';
 import { BrainStore, DatabaseFileStore, PostgresBrainClient } from '@brain/brain';
-import { AccessService, brainApiConfigSchema, buildApp, PeopleService, registerPhase1Jobs, startEmbeddingWorker, startJobRunner, TokenSigner, type BrainApiConfig, type BrainApiDeps, type EmbeddingWorker, type JobRunner } from '@brain/brain-api';
+import { AccessService, brainApiConfigSchema, buildApp, PeopleService, registerPhase1Jobs, startEmbeddingWorker, startExtractionWorker, startJobRunner, TokenSigner, type BrainApiConfig, type BrainApiDeps, type DocumentService, type EmbeddingWorker, type ExtractionWorker, type JobRunner } from '@brain/brain-api';
 import { Bridge, BridgeStore, bridgeConfigSchema, type BridgeConfig } from '@brain/bridge';
-import { embeddingProviderFromConfig } from '@brain/models';
+import { embeddingProviderFromConfig, FakeOcrProvider } from '@brain/models';
 import { Ingestion, ingestionConfigSchema } from '@brain/ingestion';
 import { MattermostApi, type MmPost, type MmUser } from '@brain/scripts/lib/mattermost.ts';
 import {
@@ -293,9 +293,11 @@ export class Stack {
     const files = new DatabaseFileStore(this.pool);
     // Jobs run only when a test ticks them (`jobs.tick(now)`), never on a timer.
     const jobs = startJobRunner({ pool: this.pool, log, tickMs: 60_000, enabled: false });
-    const deps: BrainApiDeps = { config, pool: this.pool, store, embeddings, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, people, files, jobs, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log };
+    const ocr = new FakeOcrProvider();
+    const deps: BrainApiDeps = { config, pool: this.pool, store, embeddings, ocr, chat, adminChat, relay: this.relay, keyStore: this.keyStore(), bridgeSigner: this.bridgeSigner, access, tokens, people, files, jobs, botUserId, teamName: this.env.MM_TEAM_NAME ?? '', log };
     const app = await buildApp(deps);
-    registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces });
+    registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces, documents: deps.documents, tasks: deps.tasks });
+    const extraction = deps.documents ? startExtractionWorker({ documents: deps.documents, log, intervalMs: 500, concurrency: 2 }) : undefined;
     const worker = embeddings ? startEmbeddingWorker({ store, embeddings, log, intervalMs: 500, batchSize: 64 }) : undefined;
     await app.listen({ host: '0.0.0.0', port });
     return {
@@ -309,8 +311,12 @@ export class Stack {
       worker,
       people,
       jobs,
+      ocr,
+      documents: deps.documents!,
+      extraction,
       stop: async () => {
         jobs.stop();
+        await extraction?.stop();
         await worker?.stop();
         await app.close();
       },
@@ -329,6 +335,9 @@ export interface BrainApiHandle {
   worker: EmbeddingWorker | undefined;
   people: PeopleService;
   jobs: JobRunner;
+  ocr: FakeOcrProvider;
+  documents: DocumentService;
+  extraction: ExtractionWorker | undefined;
   stop(): Promise<void>;
 }
 

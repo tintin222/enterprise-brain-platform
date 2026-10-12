@@ -1,7 +1,7 @@
 // Mattermost -> relay mirroring (docs/bridge-spec.md section 5): posts and thread replies, edits, deletions
 // and reactions. Every entry point is idempotent: message_map, reaction_map and the outbox turn repeats into
 // no-ops, so live events, catch-up and backfill can overlap freely.
-import type { ChatClient, Logger, MmPost, MmReaction, RelayClient, Signer } from '@brain/shared';
+import type { ChatClient, Logger, MmFileInfo, MmPost, MmReaction, RelayClient, Signer } from '@brain/shared';
 import type { ChannelService } from './channels.ts';
 import { emojiForName } from './emoji.ts';
 import { buildDeletionEvent, buildEditEvent, buildPostEvent, buildReactionEvent, postContent } from './events.ts';
@@ -105,10 +105,12 @@ export class MmToRelay {
       }
     }
 
+    const { content, files } = await this.#content(channel, post);
     const unsigned = buildPostEvent({
       relayChannelId: channel.relayChannelId,
       post,
-      content: await this.#content(channel, post),
+      content,
+      files,
       rootEventId,
       mentionPubkeys: await this.#mentionPubkeys(post.message),
       backfill: options.backfill,
@@ -135,7 +137,7 @@ export class MmToRelay {
       relayChannelId: channel.relayChannelId,
       targetEventId: mapped.relayEventId,
       postId: post.id,
-      content: await this.#content(channel, post),
+      content: (await this.#content(channel, post)).content,
       editAtMs: post.edit_at,
       mentionPubkeys: await this.#mentionPubkeys(post.message),
       nowMs: Date.now(),
@@ -218,15 +220,18 @@ export class MmToRelay {
     }
   }
 
-  /** The post's text plus attachment names and its permalink (files stay in Mattermost, spike A12). */
-  async #content(channel: ChannelRow, post: MmPost): Promise<string> {
-    if (!post.file_ids?.length) return post.message;
+  /** The post's text plus attachment names and its permalink (files stay in Mattermost, spike A12), and the files themselves for the event's tags. */
+  async #content(channel: ChannelRow, post: MmPost): Promise<{ content: string; files: MmFileInfo[] }> {
+    if (!post.file_ids?.length) return { content: post.message, files: [] };
     const files = post.metadata?.files?.length ? post.metadata.files : await this.#deps.chat.getFileInfos(post.id);
-    return postContent(
-      post.message,
-      files.map((file) => file.name),
-      this.#deps.chat.permalink(await this.#teamName(channel.mmTeamId), post.id),
-    );
+    return {
+      content: postContent(
+        post.message,
+        files.map((file) => file.name),
+        this.#deps.chat.permalink(await this.#teamName(channel.mmTeamId), post.id),
+      ),
+      files,
+    };
   }
 
   async #teamName(teamId: string): Promise<string> {

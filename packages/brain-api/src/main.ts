@@ -2,11 +2,12 @@
 // embedding worker; migrations run first.
 import { RUNTIME_MIGRATIONS_DIR } from '@brain/agent-runtime';
 import { BrainStore, DatabaseFileStore } from '@brain/brain';
-import { embeddingProviderFromConfig } from '@brain/models';
+import { embeddingProviderFromConfig, ocrProviderFromConfig } from '@brain/models';
 import { BuzzRelayClient, chatApiUrl, createLogger, createPool, IDENTITY_MIGRATIONS_DIR, KeyStore, loadDotEnv, MattermostChatClient, migrate, parseConfig, signerFromHex } from '@brain/shared';
 import { AccessService } from './access.ts';
 import { buildApp, type BrainApiDeps } from './app.ts';
 import { brainApiConfigSchema } from './config.ts';
+import { startExtractionWorker } from './documents.ts';
 import { startJobRunner } from './jobs.ts';
 import { PeopleService } from './people.ts';
 import { registerPhase1Jobs } from './phase1-jobs.ts';
@@ -45,6 +46,7 @@ const deps: BrainApiDeps = {
   pool,
   store,
   embeddings,
+  ocr: config.BRAIN_FEATURE_OCR_MODEL ? ocrProviderFromConfig(config) : undefined,
   chat,
   adminChat,
   relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
@@ -61,7 +63,8 @@ const deps: BrainApiDeps = {
   readiness: { mattermost: async () => (await chat.getMe()).id === botUserId },
 };
 const app = await buildApp(deps);
-registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces });
+registerPhase1Jobs({ config, store, people, chat, jobs, log, botUserId, workspaces: deps.workspaces, documents: deps.documents, tasks: deps.tasks });
+const extraction = config.BRAIN_FEATURE_DOCUMENTS && deps.documents ? startExtractionWorker({ documents: deps.documents, log, intervalMs: 3000, concurrency: config.BRAIN_EXTRACT_CONCURRENCY }) : undefined;
 
 let stopping = false;
 const shutdown = (signal: string): void => {
@@ -69,7 +72,7 @@ const shutdown = (signal: string): void => {
   stopping = true;
   log.info({ signal }, 'Shutting down');
   jobs.stop();
-  void Promise.all([app.close(), worker?.stop()])
+  void Promise.all([app.close(), worker?.stop(), extraction?.stop()])
     .then(() => pool.end())
     .finally(() => process.exit(0));
 };

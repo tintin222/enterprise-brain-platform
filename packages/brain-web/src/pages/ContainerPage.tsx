@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import { Link, useParams } from 'react-router';
 import { brain, type EntitySummary, type Milestone } from '../api.ts';
+import { UploadForm } from './UploadForm.tsx';
 import { ErrorLine, useAsync, useMe, when } from '../App.tsx';
 
 const NEW_TYPES = ['decision', 'requirement', 'task', 'system', 'document', 'agent_note'];
@@ -302,6 +303,11 @@ export function ContainerPage() {
                 <FormattedMessage id="home.tasks" /> <span className="muted">(<FormattedMessage id="home.openCount" values={{ count: data.tasks.open }} />)</span>
               </h2>
               <EntityList items={data.tasks.recent} empty="home.empty" />
+              <p>
+                <Link to={`/containers/${id}/tasks`}>
+                  <FormattedMessage id="home.allTasks" />
+                </Link>
+              </p>
             </section>
             <section className="card">
               <h2>
@@ -314,6 +320,7 @@ export function ContainerPage() {
                 <FormattedMessage id="home.documents" />
               </h2>
               <EntityList items={data.documents} empty="home.empty" />
+              {container.status === 'active' && <UploadForm attachTo={id} onDone={() => home.reload()} />}
             </section>
             <section className="card">
               <h2>

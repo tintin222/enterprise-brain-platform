@@ -72,6 +72,7 @@ export function SearchPage() {
             {TYPES.map((candidate) => (
               <option key={candidate} value={candidate}>
                 {intl.formatMessage({ id: `type.${candidate}` })}
+                {search.data?.facets.types[candidate] ? ` (${search.data.facets.types[candidate]})` : ''}
               </option>
             ))}
           </select>
@@ -83,6 +84,7 @@ export function SearchPage() {
             {containers.data?.containers.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.title}
+                {search.data?.facets.containers[item.id] ? ` (${search.data.facets.containers[item.id]})` : ''}
               </option>
             ))}
           </select>

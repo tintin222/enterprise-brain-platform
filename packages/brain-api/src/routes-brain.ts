@@ -210,7 +210,7 @@ export function registerBrainRoutes(app: FastifyInstance, deps: BrainApiDeps, li
 
   // --- search ---
 
-  api.get('/search', { schema: { tags: ['Search'], summary: 'Hybrid search over everything the caller may see, with citations', querystring: s.searchQuery, response: { 200: z.object({ results: z.array(s.searchResultOut), semantic: z.boolean(), tookMs: z.number() }) } } }, async (request) => {
+  api.get('/search', { schema: { tags: ['Search'], summary: 'Hybrid search over everything the caller may see, with citations and facets', querystring: s.searchQuery, response: { 200: z.object({ results: z.array(s.searchResultOut), semantic: z.boolean(), tookMs: z.number(), facets: z.object({ types: z.record(z.string(), z.number()), containers: z.record(z.string(), z.number()) }) }) } } }, async (request) => {
     const principal = requirePrincipal(request);
     const started = Date.now();
     const q = request.query;
@@ -233,7 +233,12 @@ export function registerBrainRoutes(app: FastifyInstance, deps: BrainApiDeps, li
       limit: q.limit,
     });
     await store.audit({ action: 'search', details: { queryHash: createHash('sha256').update(q.q).digest('hex').slice(0, 16), results: results.length, semantic: embedding !== undefined } }, writeContext(request, principal));
-    return { results: results.map((result) => presentSearchResult(result, urls)), semantic: embedding !== undefined, tookMs: Date.now() - started };
+    const facets = { types: {} as Record<string, number>, containers: {} as Record<string, number> };
+    for (const result of results) {
+      facets.types[result.entityType] = (facets.types[result.entityType] ?? 0) + 1;
+      facets.containers[result.containerId] = (facets.containers[result.containerId] ?? 0) + 1;
+    }
+    return { results: results.map((result) => presentSearchResult(result, urls)), semantic: embedding !== undefined, tookMs: Date.now() - started, facets };
   });
 
   // --- audit ---

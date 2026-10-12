@@ -61,12 +61,23 @@ function entityFilterSql(filters: SearchFilters | undefined, params: Params): st
 }
 
 /**
- * The query's lexemes, stemmed once. Chunks holding all of them are ranked first; only when none does, chunks
- * holding any of them (D34: questions rarely repeat a text's exact phrasing). Ranking every chunk that holds any
- * common word costs seconds at 250 k chunks, so the any-term half runs only as the fallback (D61).
+ * The query's lexemes, stemmed once, in three tiers (D61, Q24). Chunks holding all of them rank first. When none
+ * does, chunks holding any of the three rarest lexemes (by brain.lexeme_stats, refreshed by a job; unknown words
+ * count as rarest), which keeps a question's candidate set small. Only when those match nothing, chunks holding
+ * any lexeme at all (D34). Each tier runs only if the one before found nothing (one-time filters).
  */
-const LEXEMES = `array(SELECT quote_literal(lexeme) FROM unnest(tsvector_to_array(to_tsvector('english', $QUERY))) AS lexeme)`;
-const tsquery = (operator: '&' | '|'): string => `to_tsquery('simple', array_to_string(${LEXEMES}, ' ${operator} '))`;
+const RARE_TERMS = 3;
+const LEXEMES = `lex AS (
+      SELECT lexeme, COALESCE(s.chunks, 0) AS n, ordinality
+      FROM unnest(tsvector_to_array(to_tsvector('english', $QUERY))) WITH ORDINALITY AS t(lexeme, ordinality)
+      LEFT JOIN brain.lexeme_stats s USING (lexeme)
+    ),
+    rare AS (SELECT lexeme FROM lex ORDER BY n, ordinality LIMIT ${RARE_TERMS}),
+    q AS (
+      SELECT to_tsquery('simple', (SELECT string_agg(quote_literal(lexeme), ' & ' ORDER BY ordinality) FROM lex)) AS all_terms,
+             to_tsquery('simple', (SELECT string_agg(quote_literal(lexeme), ' | ') FROM rare)) AS rare_terms,
+             to_tsquery('simple', (SELECT string_agg(quote_literal(lexeme), ' | ' ORDER BY ordinality) FROM lex)) AS any_term
+    )`;
 
 interface Row {
   chunk_id: string;
@@ -103,8 +114,7 @@ function citationOf(row: Row): Citation {
 export async function hybridSearch(db: Queryable, input: SearchParams): Promise<SearchResult[]> {
   const params = new Params();
   const query = params.add(input.query);
-  const allTerms = tsquery('&').replace('$QUERY', query);
-  const anyTerm = tsquery('|').replace('$QUERY', query);
+  const lexemes = LEXEMES.replace('$QUERY', query);
   const scope = scopeSql(input.scope, params);
   const chunkFilters = chunkFilterSql(input.filters, params);
   const candidates = params.add(CANDIDATES);
@@ -120,22 +130,29 @@ export async function hybridSearch(db: Queryable, input: SearchParams): Promise<
   const entityFilters = entityFilterSql(input.filters, params);
   const limit = params.add(Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
   const sql = `
-    WITH q AS (SELECT ${allTerms} AS all_terms, ${anyTerm} AS any_term),
+    WITH ${lexemes},
     kw_all AS (
       SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.all_terms) AS rank
       FROM brain.chunks c, q
-      WHERE c.search @@ q.all_terms AND ${scope}${chunkFilters}
+      WHERE q.all_terms IS NOT NULL AND c.search @@ q.all_terms AND ${scope}${chunkFilters}
+      ORDER BY rank DESC
+      LIMIT ${candidates}
+    ),
+    kw_rare AS (
+      SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.any_term) AS rank
+      FROM brain.chunks c, q
+      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND q.rare_terms IS NOT NULL AND c.search @@ q.rare_terms AND ${scope}${chunkFilters}
       ORDER BY rank DESC
       LIMIT ${candidates}
     ),
     kw_any AS (
       SELECT c.id, c.entity_id, ts_rank_cd(c.search, q.any_term) AS rank
       FROM brain.chunks c, q
-      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND c.search @@ q.any_term AND ${scope}${chunkFilters}
+      WHERE NOT EXISTS (SELECT 1 FROM kw_all) AND NOT EXISTS (SELECT 1 FROM kw_rare) AND q.any_term IS NOT NULL AND c.search @@ q.any_term AND ${scope}${chunkFilters}
       ORDER BY rank DESC
       LIMIT ${candidates}
     ),
-    kw AS (SELECT id, entity_id, rank FROM kw_all UNION ALL SELECT id, entity_id, rank FROM kw_any),
+    kw AS (SELECT id, entity_id, rank FROM kw_all UNION ALL SELECT id, entity_id, rank FROM kw_rare UNION ALL SELECT id, entity_id, rank FROM kw_any),
     kwr AS (SELECT id, entity_id, row_number() OVER (ORDER BY rank DESC) AS r FROM kw),
     vec AS (${vectorHalf}),
     vecr AS (SELECT id, entity_id, row_number() OVER (ORDER BY distance) AS r FROM vec),

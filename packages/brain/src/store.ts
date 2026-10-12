@@ -386,6 +386,15 @@ export class BrainStore {
   }
 
   /** Name, visibility and active state of a relay channel, as ingestion keeps them (D36). */
+  /** How many chunks hold each lexeme (Q24): rebuilt from the chunks' index in one statement, for the search's rare-terms tier. */
+  async refreshLexemeStats(): Promise<number> {
+    return withTransaction(this.pool, async (tx) => {
+      await tx.query('TRUNCATE brain.lexeme_stats');
+      const r = await tx.query("INSERT INTO brain.lexeme_stats (lexeme, chunks) SELECT word, ndoc FROM ts_stat('SELECT search FROM brain.chunks')");
+      return r.rowCount ?? 0;
+    });
+  }
+
   /** Containers a person entity owns (the owner is always a member; plan section 4). */
   async containersOwnedBy(personId: string): Promise<string[]> {
     const r = await this.pool.query<{ id: string }>('SELECT id FROM brain.containers WHERE owner_id = $1', [personId]);
