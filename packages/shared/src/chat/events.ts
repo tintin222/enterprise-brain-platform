@@ -2,6 +2,7 @@
 // `onConnected`, which fires after every (re)authentication, because events can be lost while offline.
 import { backoffDelay } from '../async.ts';
 import type { Logger } from '../logger.ts';
+import { metrics } from '../metrics.ts';
 import type { ChatEvent, MmChannel, MmPost, MmReaction } from './types.ts';
 
 export interface ChatEventHandlers {
@@ -71,6 +72,7 @@ export class MattermostEventStream implements ChatEventStream {
       this.#connected = false;
       if (wasConnected) this.#handlers.onDisconnected?.();
       if (this.#closed) return;
+      metrics.chatReconnects.inc();
       const delay = Math.max(500, backoffDelay(this.#attempt++, 1000, 30_000));
       this.#log.warn({ delayMs: delay }, 'Mattermost WebSocket closed; reconnecting');
       this.#reconnectTimer = setTimeout(() => this.#open(), delay);

@@ -11,6 +11,9 @@ export interface ThreadKey {
 
 export interface PendingThread extends ThreadKey {
   version: number;
+  dueAt: Date;
+  /** The thread's first change since it was last indexed. */
+  firstAt: Date;
 }
 
 export type ExclusionKind = 'channel' | 'author';
@@ -44,6 +47,22 @@ export class IngestionStore {
     ]);
   }
 
+  /** Event ids of the thread's messages that ingestion has seen. */
+  async messageIds(thread: ThreadKey): Promise<string[]> {
+    const r = await this.#db.query<{ event_id: string }>('SELECT event_id FROM ingestion.messages WHERE channel_id = $1 AND root_id = $2', [thread.channelId, thread.rootId]);
+    return r.rows.map((row) => row.event_id);
+  }
+
+  /** True if this edit or deletion was handled before (catch-up re-reads an overlap window). */
+  async changeSeen(eventId: string): Promise<boolean> {
+    const r = await this.#db.query('SELECT 1 FROM ingestion.seen_changes WHERE event_id = $1', [eventId]);
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async markChangeSeen(eventId: string): Promise<void> {
+    await this.#db.query('INSERT INTO ingestion.seen_changes (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
+  }
+
   /** The thread a message belongs to, if ingestion has seen it. */
   async threadOf(eventId: string): Promise<ThreadKey | undefined> {
     const r = await this.#db.query<{ channel_id: string; root_id: string }>('SELECT channel_id, root_id FROM ingestion.messages WHERE event_id = $1', [eventId]);
@@ -60,11 +79,11 @@ export class IngestionStore {
   }
 
   async duePending(now: Date, limit: number): Promise<PendingThread[]> {
-    const r = await this.#db.query<{ channel_id: string; root_id: string; version: number }>(
-      'SELECT channel_id, root_id, version FROM ingestion.pending WHERE due_at <= $1 ORDER BY due_at LIMIT $2',
+    const r = await this.#db.query<{ channel_id: string; root_id: string; version: number; due_at: Date; first_at: Date }>(
+      'SELECT channel_id, root_id, version, due_at, first_at FROM ingestion.pending WHERE due_at <= $1 ORDER BY due_at LIMIT $2',
       [now, limit],
     );
-    return r.rows.map((row) => ({ channelId: row.channel_id, rootId: row.root_id, version: row.version }));
+    return r.rows.map((row) => ({ channelId: row.channel_id, rootId: row.root_id, version: row.version, dueAt: row.due_at, firstAt: row.first_at }));
   }
 
   /**

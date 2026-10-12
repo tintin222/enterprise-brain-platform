@@ -128,10 +128,11 @@ Write the `message_map` row in the same transaction that records the successful 
 
 ## 9. Failure handling
 
-- Retry transient failures with exponential backoff and jitter. After the retry budget, write to `dead_letter` and continue with the next event; never block a channel forever on one bad message.
+- Retry transient failures with exponential backoff and jitter. After the retry budget, write to `dead_letter` and continue with the next event; never block a channel forever on one bad message. `pnpm dead-letter` lists and replays them (docs/operations.md section 3).
 - A failed publish for a thread root pauses that thread's replies until the root succeeds.
-- Throttle relay writes per identity and globally; the relay enforces no rate limits of its own.
-- Expose metrics: events mirrored per direction, lag per direction, retries, dead letters, WebSocket reconnects.
+- Throttle relay requests per signing key below the relay's per-key limit (`RELAY_REQUESTS_PER_SECOND`, 15 per second against the relay's 20; D20, D39), and Mattermost requests per token (`MM_REQUESTS_PER_SECOND`). The relay does enforce per-key rate limits, answering 429, which clients retry.
+- Expose metrics: events mirrored per direction, lag per direction, retries, dead letters, WebSocket reconnects. As built: `brain_bridge_mirrored_total`, `brain_bridge_mirror_lag_seconds`, `brain_bridge_retries_total`, `brain_bridge_dead_letters_total` and `_open`, `brain_relay_reconnects_total`, `brain_chat_reconnects_total`, on `/metrics` (docs/operations.md section 1).
+- If the relay loses its data, rebuild it from Mattermost (`pnpm relay:rebuild`, D41).
 
 ## 10. Configuration
 
@@ -147,6 +148,8 @@ Write the `message_map` row in the same transaction that records the successful 
 | `RELAY_OVERLAP_SECONDS` | Catch-up overlap window |
 | `CATCH_UP_INTERVAL_SECONDS` | Periodic Mattermost and relay catch-up (default 300) |
 | `RECONCILE_INTERVAL_SECONDS` | Periodic reconciliation (default 300) |
+| `BRIDGE_OPS_PORT`, `OPS_HOST` | Health, readiness and metrics endpoint (default 127.0.0.1:9101) |
+| `RELAY_REQUESTS_PER_SECOND`, `MM_REQUESTS_PER_SECOND` | Client-side throttles (15 and 20) |
 
 ## 11. Tests that must exist
 

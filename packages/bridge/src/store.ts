@@ -43,6 +43,40 @@ export interface ReactionRow {
   mmChannelId: string;
 }
 
+export type DeadLetterDirection = 'mm_to_relay' | 'relay_to_mm';
+
+export interface DeadLetterRow {
+  id: number;
+  direction: DeadLetterDirection;
+  payload: Record<string, unknown>;
+  error: string;
+  attempts: number;
+  createdAt: Date;
+  replayedAt: Date | null;
+}
+
+interface DeadLetterDbRow {
+  id: string;
+  direction: DeadLetterDirection;
+  payload: Record<string, unknown>;
+  error: string;
+  attempts: number;
+  created_at: Date;
+  replayed_at: Date | null;
+}
+
+const toDeadLetter = (r: DeadLetterDbRow): DeadLetterRow => ({
+  id: Number(r.id),
+  direction: r.direction,
+  payload: r.payload,
+  error: r.error,
+  attempts: r.attempts,
+  createdAt: r.created_at,
+  replayedAt: r.replayed_at,
+});
+
+const DEAD_LETTER_COLUMNS = 'id, direction, payload, error, attempts, created_at, replayed_at';
+
 export interface OutboxRow {
   relayEventId: string;
   purpose: string;
@@ -282,6 +316,11 @@ export class BridgeStore {
     return r.rows.map(toOutbox);
   }
 
+  async countOutbox(): Promise<number> {
+    const r = await this.#db.query<{ n: number }>('SELECT count(*)::int AS n FROM bridge.relay_outbox');
+    return r.rows[0]?.n ?? 0;
+  }
+
   async recordOutboxAttempt(relayEventId: string, error: string): Promise<void> {
     await this.#db.query('UPDATE bridge.relay_outbox SET attempts = attempts + 1, last_error = $2 WHERE relay_event_id = $1', [relayEventId, error]);
   }
@@ -309,9 +348,54 @@ export class BridgeStore {
     );
   }
 
+  async deleteCursor(stream: string): Promise<void> {
+    await this.#db.query('DELETE FROM bridge.cursors WHERE stream = $1', [stream]);
+  }
+
   // --- dead letters ---
 
-  async deadLetter(direction: 'mm_to_relay' | 'relay_to_mm', payload: unknown, error: string, attempts: number, db: Queryable = this.#db): Promise<void> {
+  async deadLetter(direction: DeadLetterDirection, payload: unknown, error: string, attempts: number, db: Queryable = this.#db): Promise<void> {
     await db.query('INSERT INTO bridge.dead_letter (direction, payload, error, attempts) VALUES ($1, $2, $3, $4)', [direction, JSON.stringify(payload), error, attempts]);
   }
+
+  async listDeadLetters(options: { direction?: DeadLetterDirection; includeReplayed?: boolean; limit?: number } = {}): Promise<DeadLetterRow[]> {
+    const r = await this.#db.query<DeadLetterDbRow>(
+      `SELECT ${DEAD_LETTER_COLUMNS} FROM bridge.dead_letter
+       WHERE ($1::text IS NULL OR direction = $1) AND ($2 OR replayed_at IS NULL)
+       ORDER BY id LIMIT $3`,
+      [options.direction ?? null, options.includeReplayed ?? false, options.limit ?? 100],
+    );
+    return r.rows.map(toDeadLetter);
+  }
+
+  async getDeadLetter(id: number): Promise<DeadLetterRow | undefined> {
+    const r = await this.#db.query<DeadLetterDbRow>(`SELECT ${DEAD_LETTER_COLUMNS} FROM bridge.dead_letter WHERE id = $1`, [id]);
+    return r.rows[0] ? toDeadLetter(r.rows[0]) : undefined;
+  }
+
+  async countDeadLetters(): Promise<number> {
+    const r = await this.#db.query<{ n: number }>('SELECT count(*)::int AS n FROM bridge.dead_letter WHERE replayed_at IS NULL');
+    return r.rows[0]?.n ?? 0;
+  }
+
+  /** Record a replay: success sets replayed_at; failure keeps the row open with the new error. */
+  async recordReplay(id: number, error?: string): Promise<void> {
+    if (error === undefined) await this.#db.query('UPDATE bridge.dead_letter SET replayed_at = now() WHERE id = $1', [id]);
+    else await this.#db.query('UPDATE bridge.dead_letter SET error = $2, attempts = attempts + 1 WHERE id = $1', [id, error]);
+  }
+}
+
+/**
+ * Forget everything the bridge knows about the relay's contents, after the relay was wiped (relay rebuild,
+ * docs/operations.md). Keys and channel enablement stay. Every active channel is set to paused with a
+ * `rebuild:<channel>` marker, so the next start creates it again and replays its whole history.
+ */
+export async function resetForRelayRebuild(tx: Queryable): Promise<{ channels: number }> {
+  await tx.query('TRUNCATE bridge.message_map, bridge.reaction_map, bridge.relay_outbox');
+  await tx.query('DELETE FROM bridge.cursors');
+  const marked = await tx.query(`INSERT INTO bridge.cursors (stream, position) SELECT 'rebuild:' || mm_channel_id, 1 FROM bridge.channel_map WHERE state = 'active'`);
+  await tx.query(`UPDATE bridge.channel_map SET state = 'paused', metadata_hash = NULL, updated_at = now() WHERE state = 'active'`);
+  // Relay membership and profiles are registered again as identities are used.
+  await tx.query('UPDATE identity.identities SET relay_member = false, profile_hash = NULL');
+  return { channels: marked.rowCount ?? 0 };
 }

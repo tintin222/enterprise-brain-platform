@@ -11,6 +11,8 @@ export const bridgeConfigSchema = z.object({
   RELAY_OVERLAP_SECONDS: z.coerce.number().int().min(0).default(600),
   CATCH_UP_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(300),
   RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(300),
+  /** /healthz, /readyz and /metrics (0 picks a free port). */
+  BRIDGE_OPS_PORT: z.coerce.number().int().min(0).max(65535).default(9101),
 });
 
 export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;

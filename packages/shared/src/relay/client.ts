@@ -2,7 +2,8 @@
 // Behaviour this relies on was verified in Phase 0 (docs/spike-findings.md, A1 and A7).
 import { createHash, randomBytes } from 'node:crypto';
 import type { Filter } from 'nostr-tools/filter';
-import { retry } from '../async.ts';
+import { RateLimiter, retry } from '../async.ts';
+import { metrics } from '../metrics.ts';
 import { nowSeconds, type NostrEvent, type Signer } from '../nostr.ts';
 
 export type { Filter };
@@ -58,18 +59,30 @@ function retryAfterFrom(message: string): number | undefined {
   return match ? Number(match[1]) * 1000 : undefined;
 }
 
+export interface BuzzRelayClientOptions {
+  timeoutMs?: number;
+  /** Requests per second per key; the relay allows 1200 per minute (D20), so stay below 20. */
+  perKeyPerSecond?: number;
+}
+
 export class BuzzRelayClient implements RelayClient {
   readonly httpUrl: string;
   readonly #timeoutMs: number;
+  /** One bucket per signing key: the relay rate-limits each key separately. */
+  readonly #limiter: RateLimiter;
 
-  constructor(httpUrl: string, timeoutMs = 15_000) {
+  constructor(httpUrl: string, options: BuzzRelayClientOptions = {}) {
     this.httpUrl = httpUrl.replace(/\/$/, '');
-    this.#timeoutMs = timeoutMs;
+    this.#timeoutMs = options.timeoutMs ?? 15_000;
+    const rate = options.perKeyPerSecond ?? 15;
+    this.#limiter = new RateLimiter(rate, Math.ceil(rate * 2));
   }
 
   async #post(path: string, payload: unknown, signer: Signer): Promise<{ status: number; body: unknown; text: string }> {
     const url = `${this.httpUrl}${path}`;
     const body = JSON.stringify(payload);
+    const waitedMs = await this.#limiter.acquire(signer.pubkey);
+    if (waitedMs > 0) metrics.throttleWait.observe({ target: 'relay' }, waitedMs / 1000);
     let response: Response;
     try {
       response = await fetch(url, {
@@ -79,8 +92,10 @@ export class BuzzRelayClient implements RelayClient {
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
     } catch (error) {
+      metrics.relayRequests.inc({ path, status: 'error' });
       throw new RelayError(`Relay request ${path} failed: ${error instanceof Error ? error.message : String(error)}`, { retryable: true });
     }
+    metrics.relayRequests.inc({ path, status: String(response.status) });
     const text = await response.text();
     let parsed: unknown;
     try {
@@ -111,7 +126,7 @@ export class BuzzRelayClient implements RelayClient {
     return { accepted: result.accepted === true, duplicate, message };
   }
 
-  /** Waits out rate limits (429/503) a few times before giving up. */
+  /** Waits out rate limits (429/503) and dropped connections (a restarted relay) a few times before giving up. */
   query(filters: Filter[], signer: Signer): Promise<NostrEvent[]> {
     return retry(
       async () => {
@@ -123,7 +138,7 @@ export class BuzzRelayClient implements RelayClient {
         attempts: 4,
         baseMs: 500,
         maxMs: 5000,
-        isRetryable: (error) => error instanceof RelayError && (error.status === 429 || error.status === 503),
+        isRetryable: (error) => error instanceof RelayError && (error.status === 429 || error.status === 503 || (error.status === undefined && error.retryable)),
         minDelayMs: (error) => (error instanceof RelayError && error.retryAfterMs !== undefined ? Math.min(error.retryAfterMs, 30_000) : undefined),
       },
     );

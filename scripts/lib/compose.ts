@@ -2,13 +2,16 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { envPath, repoRoot } from './env.ts';
+import { envPath, readEnvFile, repoRoot } from './env.ts';
 
 export const composeProject = 'enterprise-brain';
 const composeFile = path.join(repoRoot, 'infra', 'compose.yml');
+/** Mostlymatter instead of Team Edition, when .env says MATTERMOST_EDITION=mostlymatter (D11, D22). */
+const mostlymatterFile = path.join(repoRoot, 'infra', 'compose.mostlymatter.yml');
 
 function baseArgs(): string[] {
   const args = ['compose', '--project-name', composeProject, '--file', composeFile];
+  if (readEnvFile().MATTERMOST_EDITION === 'mostlymatter') args.push('--file', mostlymatterFile);
   if (existsSync(envPath)) args.push('--env-file', envPath);
   return args;
 }

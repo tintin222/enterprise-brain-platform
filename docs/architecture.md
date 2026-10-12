@@ -106,10 +106,12 @@ Ingestion reads the same relay log with its own cursor, groups events into threa
 
 | | Mattermost | Buzz relay |
 | --- | --- | --- |
-| Local dev | Official Team Edition container 11.7.12, pinned by digest (`infra/compose.yml`) | Relay 0.2.1 (`relay-v0.2.1`, D12), services adapted from Buzz's `deploy/compose/` bundle |
+| Local dev | Official Team Edition container 11.7.12, pinned by digest (`infra/compose.yml`); Mostlymatter of the same version with `pnpm dev:up --mostlymatter` (D40) | Relay 0.2.1 (`relay-v0.2.1`, D12), services adapted from Buzz's `deploy/compose/` bundle |
 | Staging / production | Mostlymatter build of the same version first; our own branded thin fork later (Phase 7) | Upstream production compose bundle (`deploy/compose/` in the Buzz repo), pinned release |
 
-Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, all bound to 127.0.0.1.
+Default local ports: Mattermost 8065, Buzz relay 3000, our state Postgres 5433, the services' operations endpoints 9101 to 9103, all bound to 127.0.0.1.
+
+Operations (health and metrics endpoints, throttling, dead letters, key rotation, relay rebuild) are in `docs/operations.md`, the load test in `docs/load-test.md`, the security review in `docs/security-review.md`.
 
 The relay serves one community, keyed on the host of its `RELAY_URL`. Every client must reach it by that host name (and NIP-98 `u` tags must use it); any other Host header gets 404. Inside Docker, set `RELAY_URL` to the internal name all services use.
 
@@ -117,8 +119,8 @@ The relay serves one community, keyed on the host of its `RELAY_URL`. Every clie
 
 | Risk | Mitigation |
 | --- | --- |
-| Buzz is pre-1.0 and changes quickly | Pin a release; all access through `RelayClient`; relay is rebuildable from Mattermost |
+| Buzz is pre-1.0 and changes quickly | Pin a release; all access through `RelayClient`; relay is rebuildable from Mattermost (`pnpm relay:rebuild`, drilled in Phase 6) |
 | Upstream behaviour differs from what these docs assume | Phase 0 spike tests every assumption before feature work |
 | Mattermost WebSocket drops events | Catch-up by `since` on reconnect plus periodic reconciliation |
 | Duplicate or looping messages | Mapping table checked before every write; origin recorded for every message |
-| Leak of private-channel knowledge through an agent | Retrieval always scoped by live channel membership |
+| Leak of private-channel knowledge through an agent | Retrieval scoped at query time to the asking channel and active open channels (D35) |

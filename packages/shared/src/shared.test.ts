@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CoalescedTask, KeyedQueue, retry } from './async.ts';
+import { CoalescedTask, KeyedQueue, RateLimiter, retry } from './async.ts';
 import { ConfigError, parseConfig } from './config.ts';
 import type { Queryable } from './db.ts';
 import { KeyStore, KeyStoreError } from './key-store.ts';
@@ -159,5 +159,17 @@ describe('retry', () => {
     calls = 0;
     await expect(retry(async () => (calls++, Promise.reject(new Error('fatal'))), { attempts: 5, baseMs: 1, maxMs: 2, isRetryable: () => false })).rejects.toThrow('fatal');
     expect(calls).toBe(1);
+  });
+});
+
+describe('RateLimiter', () => {
+  it('lets a burst through, then paces each key on its own', async () => {
+    const limiter = new RateLimiter(20, 2);
+    const started = Date.now();
+    await Promise.all([limiter.acquire('a'), limiter.acquire('a'), limiter.acquire('b')]);
+    expect(Date.now() - started).toBeLessThan(30);
+    await Promise.all([limiter.acquire('a'), limiter.acquire('a')]);
+    // Two more tokens at 20 per second take about 100 ms.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(80);
   });
 });

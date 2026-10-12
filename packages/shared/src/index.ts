@@ -12,6 +12,7 @@ export * from './db.ts';
 export * from './identity.ts';
 export * from './key-store.ts';
 export * from './logger.ts';
+export * from './metrics.ts';
 export * from './nostr.ts';
 export * from './relay-identity.ts';
 export * from './relay/channels.ts';

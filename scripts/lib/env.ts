@@ -95,7 +95,8 @@ export function readEnvFile(file = envPath): EnvValues {
 }
 
 function writeEnvFile(values: EnvValues): void {
-  writeFileSync(envPath, renderEnv(readFileSync(envExamplePath, 'utf8'), values), { mode: 0o600 });
+  // Derived values (RELAY_OWNER_PUBKEY, STATE_DATABASE_URL) follow every change of what they derive from.
+  writeFileSync(envPath, renderEnv(readFileSync(envExamplePath, 'utf8'), { ...values, ...deriveValues(values) }), { mode: 0o600 });
   chmodSync(envPath, 0o600);
 }
 
@@ -110,6 +111,13 @@ export function ensureEnvFile(): { created: boolean; generated: string[] } {
 /** Set one key in .env, keeping everything else. */
 export function updateEnvFile(key: string, value: string): void {
   writeEnvFile({ ...readEnvFile(), [key]: value });
+}
+
+/** Remove a key from .env (keys from .env.example stay, empty). */
+export function removeFromEnvFile(key: string): void {
+  const values = readEnvFile();
+  delete values[key];
+  writeEnvFile(values);
 }
 
 /** Load .env for a script; fails with a hint when the stack has not been set up. */

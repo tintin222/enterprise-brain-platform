@@ -8,18 +8,22 @@ import {
   ChannelWatcher,
   CoalescedTask,
   errorFields,
+  gaugeFrom,
   KeyedQueue,
+  metrics,
   migrate,
   nowSeconds,
   ProfileNames,
   RelaySubscriber,
   signerFromHex,
+  startOpsServer,
   tagValue,
   threadRoot,
   type BrainClient,
   type BrainDocument,
   type Logger,
   type NostrEvent,
+  type OpsServer,
   type Pool,
   type RelayClient,
   type Signer,
@@ -71,6 +75,7 @@ export class Ingestion {
   #watcher: ChannelWatcher | undefined;
   readonly #timers: NodeJS.Timeout[] = [];
   #stopped = false;
+  #ops: OpsServer | undefined;
 
   constructor(deps: IngestionDeps) {
     this.#deps = deps;
@@ -87,12 +92,29 @@ export class Ingestion {
     );
   }
 
+  /** The port of /healthz, /readyz and /metrics once started. */
+  get opsPort(): number | undefined {
+    return this.#ops?.port;
+  }
+
   async start(): Promise<void> {
     const { pool, relay, config, log } = this.#deps;
+    this.#ops = await startOpsServer({
+      host: config.OPS_HOST,
+      port: config.INGESTION_OPS_PORT,
+      log,
+      checks: [
+        { name: 'database', check: async () => (await pool.query('SELECT 1')).rowCount === 1 },
+        { name: 'relay', check: () => this.#subscriber?.connected ?? false },
+      ],
+    });
     await migrate(pool, 'ingestion', INGESTION_MIGRATIONS_DIR);
+    gaugeFrom('brain_ingestion_pending_threads', 'Threads waiting to be indexed', () => this.store.pendingCount());
+    gaugeFrom('brain_ingestion_relay_subscriptions', 'Relay subscriptions the relay confirmed', () => this.#subscriber?.activeCount ?? 0);
     const subscriber = new RelaySubscriber({
       url: config.RELAY_WS_URL,
       signer: this.#reader,
+      name: 'ingestion',
       log,
       onEvent: (key, event) => {
         if (key === this.#watcher?.key) this.#watcher.handle(event);
@@ -137,6 +159,7 @@ export class Ingestion {
     this.#subscriber?.close();
     await Promise.all([this.#catchUp.idle(), this.#flush.idle()]);
     await this.#queue.idle();
+    await this.#ops?.close();
     this.#deps.log.info('Ingestion stopped');
   }
 
@@ -180,19 +203,23 @@ export class Ingestion {
     if (this.#stopped) return;
     switch (event.kind) {
       case 9: {
+        // Catch-up re-reads an overlap window: a message seen before changes nothing. Pending first, then the
+        // record, so a crash in between can only cause one extra indexing, never a missed one.
+        if (await this.store.threadOf(event.id)) return;
         const thread = { channelId, rootId: threadRoot(event) ?? event.id };
-        await this.store.recordMessage(event.id, thread, event.pubkey);
         await this.#markPending(thread);
+        await this.store.recordMessage(event.id, thread, event.pubkey);
         return;
       }
       case 40003:
       case 5:
       case 9005: {
         const target = tagValue(event, 'e');
-        if (!target) return;
+        if (!target || (await this.store.changeSeen(event.id))) return;
         // Deletions of anything else (reactions) find no thread and are ignored.
         const thread = (await this.store.threadOf(target)) ?? (event.kind === 40003 ? await this.#learnMessage(channelId, target) : undefined);
         if (thread) await this.#markPending(thread);
+        await this.store.markChangeSeen(event.id);
         return;
       }
       case 39000: {
@@ -291,19 +318,38 @@ export class Ingestion {
       }
     }
     const ids = docs.map((doc) => doc.id);
+    const stale = previous.filter((id) => !ids.includes(id));
     await brain.upsertDocuments(docs);
-    await brain.deleteDocuments(previous.filter((id) => !ids.includes(id)));
+    await brain.deleteDocuments(stale);
     await this.store.setThreadDocs(thread, ids);
+    metrics.threadsIndexed.inc();
+    metrics.documents.inc({ op: 'upsert' }, docs.length);
+    metrics.documents.inc({ op: 'delete' }, stale.length);
+    metrics.indexLag.observe(Math.max(0, Date.now() - thread.firstAt.getTime()) / 1000);
     log.debug({ channelId: thread.channelId, rootId: thread.rootId, documents: ids.length }, 'Indexed thread');
   }
 
-  /** The thread's chat messages with their newest edits; the relay already hides deleted ones. */
+  /**
+   * The thread's chat messages with their newest edits; the relay already hides deleted ones. One request:
+   * the edits are looked up by the message ids ingestion has recorded for the thread.
+   */
   async #threadMessages(thread: ThreadKey): Promise<NostrEvent[]> {
     const { relay } = this.#deps;
-    const found = await relay.query([{ ids: [thread.rootId] }, { kinds: [9], '#h': [thread.channelId], '#e': [thread.rootId], limit: 1000 }], this.#reader);
+    const known = new Set([thread.rootId, ...(await this.store.messageIds(thread))]);
+    const found = await relay.query(
+      [
+        { ids: [thread.rootId] },
+        { kinds: [9], '#h': [thread.channelId], '#e': [thread.rootId], limit: 1000 },
+        { kinds: [40003], '#h': [thread.channelId], '#e': [...known], limit: 1000 },
+      ],
+      this.#reader,
+    );
     const messages = [...new Map(found.filter((event) => event.kind === 9 && (event.id === thread.rootId || threadRoot(event) === thread.rootId)).map((event) => [event.id, event])).values()];
     if (messages.length === 0) return [];
-    const edits = await relay.query([{ kinds: [40003], '#h': [thread.channelId], '#e': messages.map((message) => message.id), limit: 1000 }], this.#reader);
+    const edits = found.filter((event) => event.kind === 40003);
+    // A message ingestion had not recorded yet (it arrived during this read) may have edits too.
+    const unknown = messages.filter((message) => !known.has(message.id)).map((message) => message.id);
+    if (unknown.length > 0) edits.push(...(await relay.query([{ kinds: [40003], '#h': [thread.channelId], '#e': unknown, limit: 1000 }], this.#reader)));
     return applyEdits(messages, edits);
   }
 }
@@ -337,4 +383,17 @@ export async function purgeAuthor(deps: PurgeDeps, authorPubkey: string): Promis
     await store.markPending(thread, new Date());
   }
   return threads.length;
+}
+
+/**
+ * Forget everything ingestion indexed, after the relay was wiped and rebuilt with new event ids (docs/
+ * operations.md): its documents leave the brain and its state starts over, so the next start indexes the
+ * rebuilt relay from the beginning. Purge exclusions stay.
+ */
+export async function resetForRelayRebuild(deps: PurgeDeps): Promise<{ documents: number }> {
+  const result = await deps.pool.query<{ id: string }>('SELECT unnest(doc_ids) AS id FROM ingestion.threads');
+  const ids = result.rows.map((row) => row.id);
+  for (let i = 0; i < ids.length; i += 1000) await deps.brain.deleteDocuments(ids.slice(i, i + 1000));
+  await deps.pool.query('TRUNCATE ingestion.messages, ingestion.threads, ingestion.pending, ingestion.cursors, ingestion.seen_changes');
+  return { documents: ids.length };
 }

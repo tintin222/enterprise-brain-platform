@@ -6,6 +6,7 @@
 // catch-up, anything after arrives live. It fires again after every re-subscription (reconnects, retries).
 import { backoffDelay } from '../async.ts';
 import type { Logger } from '../logger.ts';
+import { metrics } from '../metrics.ts';
 import { nowSeconds, type NostrEvent, type Signer } from '../nostr.ts';
 import type { Filter } from './client.ts';
 
@@ -18,6 +19,8 @@ export interface RelaySubscriberOptions {
   /** After every (re)authentication. */
   onConnected?(): void;
   log: Logger;
+  /** The service, for metrics labels. */
+  name?: string;
   /** Subscriptions per connection before another connection is opened (relay limit: 1024). */
   maxPerConnection?: number;
   /** REQ frames per second per connection (relay limit per key, D20: 50/s). */
@@ -73,6 +76,7 @@ class Connection {
       this.#authenticated = false;
       this.active.clear();
       if (this.#closed) return;
+      metrics.relayReconnects.inc({ service: this.#opts.name ?? 'unknown' });
       const delay = Math.max(500, backoffDelay(this.#attempt++, 1000, 30_000));
       this.#opts.log.warn({ delayMs: delay }, 'Relay WebSocket closed; reconnecting');
       this.#later(() => this.#open(), delay);
@@ -122,6 +126,7 @@ class Connection {
   }
 
   #onClosed(key: string, reason: string): void {
+    metrics.relaySubscriptionsClosed.inc({ service: this.#opts.name ?? 'unknown', reason: /^[\w-]+/.exec(reason)?.[0] ?? 'unknown' });
     this.active.delete(key);
     const sub = this.subs.get(key);
     if (!sub) return;
@@ -203,6 +208,11 @@ export class RelaySubscriber {
   isActive(key: string): boolean {
     const sub = this.#subs.get(key);
     return sub !== undefined && sub.connection.active.has(key);
+  }
+
+  /** True when every connection is authenticated (and with no connections yet), for readiness checks. */
+  get connected(): boolean {
+    return this.#connections.every((connection) => connection.authenticated);
   }
 
   /** How many subscriptions are confirmed, for health checks. */

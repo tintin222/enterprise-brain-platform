@@ -35,10 +35,16 @@ export interface IdentityServiceDeps {
   log: Logger;
 }
 
+/**
+ * How long a checked identity is trusted before it is read again: long enough to spare the database, short
+ * enough that a re-mapped identity (agent provisioning) or a changed name reaches the relay within minutes.
+ */
+const READY_TTL_MS = 5 * 60 * 1000;
+
 export class IdentityService {
   readonly #deps: IdentityServiceDeps;
   readonly #ctx: RelayIdentityContext;
-  readonly #ready = new Map<string, Identity>();
+  readonly #ready = new Map<string, { identity: Identity; at: number }>();
   readonly #queue = new KeyedQueue();
 
   constructor(deps: IdentityServiceDeps) {
@@ -46,12 +52,17 @@ export class IdentityService {
     this.#ctx = { relay: deps.relay, bridgeSigner: deps.bridgeSigner, identities: deps.identities, keyStore: deps.keyStore };
   }
 
+  #fresh(mmUserId: string): Identity | undefined {
+    const entry = this.#ready.get(mmUserId);
+    return entry && Date.now() - entry.at < READY_TTL_MS ? entry.identity : undefined;
+  }
+
   /** The identity for a Mattermost user, created (custodial key, relay membership, profile) if needed. */
   forUser(user: MmUser): Promise<Identity> {
-    const ready = this.#ready.get(user.id);
+    const ready = this.#fresh(user.id);
     if (ready) return Promise.resolve(ready);
     return this.#queue.run(user.id, async () => {
-      const again = this.#ready.get(user.id);
+      const again = this.#fresh(user.id);
       if (again) return again;
       const { identities, keyStore } = this.#deps;
       let identity = await identities.get(user.id);
@@ -63,13 +74,13 @@ export class IdentityService {
       }
       identity = await ensureRelayMembership(this.#ctx, identity);
       identity = await ensureProfile(this.#ctx, identity, { username: user.username, displayName: displayNameOf(user), pictureUrl: `${this.#deps.chat.baseUrl}/api/v4/users/${user.id}/image` });
-      this.#ready.set(user.id, identity);
+      this.#ready.set(user.id, { identity, at: Date.now() });
       return identity;
     });
   }
 
   async forUserId(mmUserId: string): Promise<Identity | undefined> {
-    const ready = this.#ready.get(mmUserId);
+    const ready = this.#fresh(mmUserId);
     if (ready) return ready;
     const user = await this.#deps.chat.getUser(mmUserId);
     return user ? this.forUser(user) : undefined;

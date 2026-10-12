@@ -1,0 +1,9 @@
+# Override: run Mostlymatter (no user cap) instead of Team Edition, same version and data (D11, D22).
+# Selected with `pnpm dev:up --mostlymatter` (stored as MATTERMOST_EDITION in .env); `--team-edition` switches back.
+services:
+  mattermost:
+    image: enterprise-brain/mostlymatter:11.7.12
+    build:
+      context: ./mostlymatter
+      platforms: [linux/amd64]
+    pull_policy: build

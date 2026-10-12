@@ -70,6 +70,20 @@ export async function provisionAgent(deps: ProvisionDeps, input: ProvisionInput)
   } else if (user.delete_at !== 0) {
     await chat.enableBot(user.id);
   }
+
+  // Register the identity before the bot joins the team: Mattermost then adds it to the default channels, and
+  // a running bridge that saw an unknown bot there would register it as a person.
+  const identities = new IdentityRepository(pool);
+  let identity = await identities.insertIfAbsent({ mmUserId: user.id, kind: 'agent', pubkey, secretRef: keyRef });
+  if (identity.kind === 'person' && user.is_bot) {
+    // That race, from before this order: the bot is being provisioned as an agent, so it is one.
+    identity = (await identities.convertToAgent(user.id, pubkey, keyRef)) ?? identity;
+    log.warn({ handle: input.handle, mmUserId: user.id }, 'The bot had been registered as a person; it is now registered as the agent');
+  }
+  if (identity.kind !== 'agent' || identity.pubkey !== pubkey) {
+    throw new Error(`Mattermost user @${input.handle} is already mapped to another identity (${identity.kind})`);
+  }
+
   const team = await chat.getTeamByName(deps.teamName);
   if (!team) throw new Error(`Team ${deps.teamName} not found`);
   await chat.addTeamMember(team.id, user.id);
@@ -82,11 +96,6 @@ export async function provisionAgent(deps: ProvisionDeps, input: ProvisionInput)
     else await keyStore.putSecret(tokenRef, 'agent-token', token);
   }
 
-  const identities = new IdentityRepository(pool);
-  let identity = await identities.insertIfAbsent({ mmUserId: user.id, kind: 'agent', pubkey, secretRef: keyRef });
-  if (identity.kind !== 'agent' || identity.pubkey !== pubkey) {
-    throw new Error(`Mattermost user @${input.handle} is already mapped to another identity (${identity.kind})`);
-  }
   const ctx = { relay, bridgeSigner, identities, keyStore };
   identity = await ensureRelayMembership(ctx, identity);
   await ensureProfile(ctx, identity, { username: input.handle, displayName: input.displayName, pictureUrl: `${chat.baseUrl}/api/v4/users/${user.id}/image` });

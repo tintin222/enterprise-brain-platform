@@ -68,10 +68,11 @@ export class Stack {
 
   constructor(overrides: Record<string, string> = {}) {
     loadDotEnv();
-    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '60', ...overrides };
+    // Ops endpoints on free ports, so services started in one process do not collide.
+    this.env = { ...process.env, CATCH_UP_INTERVAL_SECONDS: '60', BRIDGE_OPS_PORT: '0', RUNTIME_OPS_PORT: '0', INGESTION_OPS_PORT: '0', ...overrides };
     this.config = parseConfig(bridgeConfigSchema, this.env);
     this.pool = createPool(this.config.STATE_DATABASE_URL);
-    this.relay = new BuzzRelayClient(this.config.RELAY_HTTP_URL);
+    this.relay = new BuzzRelayClient(this.config.RELAY_HTTP_URL, { perKeyPerSecond: this.config.RELAY_REQUESTS_PER_SECOND });
     this.reader = signerFromHex(this.config.READER_SECRET_KEY);
     this.bridgeSigner = signerFromHex(this.config.BRIDGE_SECRET_KEY);
     this.store = new BridgeStore(this.pool);

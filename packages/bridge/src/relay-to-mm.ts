@@ -3,6 +3,7 @@
 import {
   ChatApiError,
   errorFields,
+  metrics,
   replyTarget,
   secretRefs,
   tagValue,
@@ -37,6 +38,14 @@ export function splitMessage(text: string, max = MAX_POST_CHARS): string[] {
   return parts;
 }
 
+/**
+ * Break @channel, @all and @here in agent text with a zero-width space, so a reply (perhaps steered by
+ * injected content) cannot notify a whole channel. People mention them; agents do not.
+ */
+export function neutralizeSpecialMentions(text: string): string {
+  return text.replace(/(^|[^\w@])@(channel|all|here)\b/gi, '$1@\u200B$2');
+}
+
 /** The event a reaction is about: the last `e` tag (NIP-25). */
 function reactionTarget(event: Pick<NostrEvent, 'tags'>): string | undefined {
   return event.tags.findLast((tag) => tag[0] === 'e')?.[1];
@@ -54,6 +63,12 @@ export interface RelayToMmDeps {
 
 /** Mattermost shows "is typing" for about 5 s; agents re-send every 4 s, so forward at most every 2 s. */
 const TYPING_THROTTLE_MS = 2000;
+
+/** Count one relay event applied in Mattermost and how long after its creation. */
+function mirrored(event: NostrEvent, kind: number): void {
+  metrics.mirrored.inc({ direction: 'relay_to_mm', kind: String(kind) });
+  metrics.mirrorLag.observe({ direction: 'relay_to_mm' }, Math.max(0, Date.now() / 1000 - event.created_at));
+}
 
 const ignoreNotFound = (error: unknown): void => {
   if (!(error instanceof ChatApiError && error.status === 404)) throw error;
@@ -137,6 +152,7 @@ export class RelayToMm {
     for (const [index, part] of parts.slice(1).entries()) {
       await bot.createPost({ channel_id: channel.mmChannelId, message: part, root_id: rootId ?? first.id, props: { relay_event_id: event.id, relay_event_part: index + 2 } });
     }
+    mirrored(event, 9);
     log.info({ relayEventId: event.id, mmPostId: first.id, mmChannelId: channel.mmChannelId }, 'Mirrored agent message to Mattermost');
   }
 
@@ -154,6 +170,7 @@ export class RelayToMm {
     const [first] = splitMessage(await this.#rewriteMentions(event));
     await bot.patchPost(mapped.mmPostId, { message: first ?? '' });
     await store.setMessageEditedOnRelay(target, event.created_at, event.id);
+    mirrored(event, 40003);
     log.info({ relayEventId: target, editEventId: event.id, mmPostId: mapped.mmPostId }, 'Mirrored agent edit to Mattermost');
   }
 
@@ -169,6 +186,7 @@ export class RelayToMm {
       const bot = await this.#botClient(author.mmUserId);
       await bot.removeReaction(author.mmUserId, reaction.mmPostId, reaction.emojiName).catch(ignoreNotFound);
       await store.deleteReaction(reaction);
+      mirrored(event, 5);
       log.info({ relayEventId: target, mmPostId: reaction.mmPostId, emoji: reaction.emojiName }, 'Mirrored agent reaction removal to Mattermost');
       return;
     }
@@ -184,6 +202,7 @@ export class RelayToMm {
     for (const part of thread.filter((p) => p.id !== mapped.mmPostId && p.props?.relay_event_id === target && p.delete_at === 0)) {
       await bot.deletePost(part.id).catch(ignoreNotFound);
     }
+    mirrored(event, 5);
     log.info({ relayEventId: target, mmPostId: mapped.mmPostId }, 'Mirrored agent deletion to Mattermost');
   }
 
@@ -205,6 +224,7 @@ export class RelayToMm {
     // Adding an existing reaction is harmless, so record it only once Mattermost has it.
     await bot.addReaction(author.mmUserId, mapped.mmPostId, emojiName);
     await store.insertReaction({ mmPostId: mapped.mmPostId, mmUserId: author.mmUserId, emoji: emojiForName(emojiName), emojiName, relayEventId: event.id, origin: 'relay', mmChannelId: channel.mmChannelId });
+    mirrored(event, 7);
     log.info({ relayEventId: event.id, mmPostId: mapped.mmPostId, emoji: emojiName }, 'Mirrored agent reaction to Mattermost');
   }
 
@@ -234,9 +254,12 @@ export class RelayToMm {
     return post.root_id || post.id;
   }
 
-  /** Agents mention people as "@Display Name" plus a p tag (spike A3); Mattermost needs @username. */
+  /**
+   * Agents mention people as "@Display Name" plus a p tag (spike A3); Mattermost needs @username. Special
+   * mentions are neutralized.
+   */
   async #rewriteMentions(event: NostrEvent): Promise<string> {
-    let content = event.content;
+    let content = neutralizeSpecialMentions(event.content);
     for (const pubkey of new Set(tagValues(event, 'p'))) {
       const identity = await this.#deps.identities.byPubkey(pubkey);
       if (identity?.kind !== 'person') continue;

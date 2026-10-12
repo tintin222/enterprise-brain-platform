@@ -23,6 +23,8 @@ export interface SyncOptions {
   deleted?: boolean;
   /** The post's current reactions, when the caller already has them (REST responses include them). */
   reactions?: MmReaction[] | undefined;
+  /** Replaying history into a rebuilt relay: agents' messages are published again too. */
+  rebuild?: boolean;
 }
 
 export interface MmToRelayDeps {
@@ -59,7 +61,7 @@ export class MmToRelay {
     }
     if (!mapped) {
       // History from before enablement is mirrored only by backfill (or as the root of a newer reply).
-      if (source === 'backfill') await this.mirrorPost(post, { backfill: true });
+      if (source === 'backfill') await this.mirrorPost(post, { backfill: true, rebuild: options.rebuild ?? false });
       else if (source === 'posted' || post.create_at >= channel.enabledAt.getTime()) await this.mirrorPost(post);
     } else if (mapped.origin === 'mm' && post.edit_at > mapped.mmEditAt) {
       await this.#mirrorEdit(channel, post, mapped);
@@ -71,7 +73,7 @@ export class MmToRelay {
    * Mirror one post. Safe to call any number of times for the same post: message_map and the outbox
    * make it a no-op once the post is on the relay.
    */
-  async mirrorPost(post: MmPost, options: { backfill?: boolean } = {}): Promise<void> {
+  async mirrorPost(post: MmPost, options: { backfill?: boolean; rebuild?: boolean } = {}): Promise<void> {
     const { store, identities, channels, publisher, chat } = this.#deps;
     if (post.type !== '' || post.user_id === this.#deps.botUserId || post.delete_at !== 0) return;
     const channel = await store.getChannel(post.channel_id);
@@ -85,8 +87,10 @@ export class MmToRelay {
 
     const author = await identities.forUserId(post.user_id);
     if (!author) return;
-    // An agent's post that carries a relay event id is the bridge's own copy of a relay message.
-    if (author.kind === 'agent' && post.props?.relay_event_id) return;
+    // An agent's post that carries a relay event id is the bridge's own copy of a relay message. Only a relay
+    // rebuild publishes it again, as the agent (D19 gives the bridge the agent's key); split parts stay out.
+    const agentCopy = author.kind === 'agent' && post.props?.relay_event_id !== undefined;
+    if (agentCopy && (!options.rebuild || post.props?.relay_event_part !== undefined)) return;
     await channels.ensureMember(channel, author.pubkey);
 
     let rootEventId: string | undefined;
@@ -95,7 +99,7 @@ export class MmToRelay {
       if (!rootEventId) {
         // The relay rejects replies to unknown parents, so mirror the root first (as history if it predates enablement).
         const root = await chat.getPost(post.root_id);
-        if (root && root.delete_at === 0) await this.mirrorPost(root, { backfill: root.create_at < channel.enabledAt.getTime() });
+        if (root && root.delete_at === 0) await this.mirrorPost(root, { backfill: root.create_at < channel.enabledAt.getTime(), rebuild: options.rebuild ?? false });
         rootEventId = (await store.getMessageByPost(post.root_id))?.relayEventId;
         if (!rootEventId) throw new Error(`Thread root ${post.root_id} could not be mirrored`);
       }
@@ -111,7 +115,15 @@ export class MmToRelay {
       nowMs: Date.now(),
     });
     const signed = (await identities.signerFor(author)).sign(unsigned);
-    await publisher.publish({ relayEventId: signed.id, purpose: 'post', mmPostId: post.id, mmChannelId: post.channel_id, authorMmUserId: post.user_id, signedEvent: signed, meta: { editAt: post.edit_at } });
+    await publisher.publish({
+      relayEventId: signed.id,
+      purpose: 'post',
+      mmPostId: post.id,
+      mmChannelId: post.channel_id,
+      authorMmUserId: post.user_id,
+      signedEvent: signed,
+      meta: { editAt: post.edit_at, origin: agentCopy ? 'relay' : 'mm' },
+    });
   }
 
   /** Kind 40003 with the full new text, signed by the original author (spike A4). */

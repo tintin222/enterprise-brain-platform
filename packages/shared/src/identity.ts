@@ -84,6 +84,19 @@ export class IdentityRepository {
     return stored;
   }
 
+  /**
+   * Re-map a bot user that the bridge registered as a person (it saw the bot join a channel before agent
+   * provisioning registered it) to its agent key. Membership and profile are registered again for the new key.
+   */
+  async convertToAgent(mmUserId: string, pubkey: string, secretRef: string, db: Queryable = this.#db): Promise<Identity | undefined> {
+    await db.query(
+      `UPDATE identity.identities SET kind = 'agent', nostr_pubkey = $2, secret_ref = $3, relay_member = false, profile_hash = NULL
+       WHERE mm_user_id = $1 AND kind = 'person'`,
+      [mmUserId, pubkey, secretRef],
+    );
+    return this.get(mmUserId, db);
+  }
+
   async markRelayMember(mmUserId: string, member = true): Promise<void> {
     await this.#db.query('UPDATE identity.identities SET relay_member = $2 WHERE mm_user_id = $1', [mmUserId, member]);
   }

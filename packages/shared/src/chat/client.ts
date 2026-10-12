@@ -1,6 +1,9 @@
 // ChatClient: the only way our services talk to Mattermost (CLAUDE.md rule 6). REST v4 over fetch and
 // the WebSocket event stream over Node's built-in WebSocket.
+import { createHash } from 'node:crypto';
+import { RateLimiter } from '../async.ts';
 import type { Logger } from '../logger.ts';
+import { metrics } from '../metrics.ts';
 import { MattermostEventStream, type ChatEventHandlers, type ChatEventStream } from './events.ts';
 import type { MmBot, MmChannel, MmFileInfo, MmPost, MmPostList, MmReaction, MmTeam, MmUser, NewPost } from './types.ts';
 
@@ -63,22 +66,38 @@ export interface ChatClient {
   connectEvents(handlers: ChatEventHandlers, logger: Logger): ChatEventStream;
 }
 
+export interface MattermostChatClientOptions {
+  timeoutMs?: number;
+  /** Requests per second per token (each bot and the bridge get their own pace). */
+  requestsPerSecond?: number;
+  /** Shared by the clients `withToken` derives, so they pace together. */
+  limiter?: RateLimiter;
+}
+
 export class MattermostChatClient implements ChatClient {
   readonly baseUrl: string;
   readonly #token: string;
   readonly #timeoutMs: number;
+  readonly #limiter: RateLimiter;
+  /** A token digest, so the limiter never holds the token itself. */
+  readonly #limiterKey: string;
 
-  constructor(baseUrl: string, token: string, timeoutMs = 15_000) {
+  constructor(baseUrl: string, token: string, options: MattermostChatClientOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.#token = token;
-    this.#timeoutMs = timeoutMs;
+    this.#timeoutMs = options.timeoutMs ?? 15_000;
+    const rate = options.requestsPerSecond ?? 20;
+    this.#limiter = options.limiter ?? new RateLimiter(rate, Math.ceil(rate * 2));
+    this.#limiterKey = createHash('sha256').update(token).digest('hex').slice(0, 16);
   }
 
   withToken(token: string): ChatClient {
-    return new MattermostChatClient(this.baseUrl, token, this.#timeoutMs);
+    return new MattermostChatClient(this.baseUrl, token, { timeoutMs: this.#timeoutMs, limiter: this.#limiter });
   }
 
   async #request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const waitedMs = await this.#limiter.acquire(this.#limiterKey);
+    if (waitedMs > 0) metrics.throttleWait.observe({ target: 'mattermost' }, waitedMs / 1000);
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/api/v4${path}`, {
@@ -92,8 +111,10 @@ export class MattermostChatClient implements ChatClient {
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
     } catch (error) {
+      metrics.chatRequests.inc({ method, status: 'error' });
       throw new ChatApiError(0, method, path, undefined, error instanceof Error ? error.message : String(error));
     }
+    metrics.chatRequests.inc({ method, status: String(response.status) });
     const text = await response.text();
     const parsed: unknown = text ? JSON.parse(text) : undefined;
     if (!response.ok) {

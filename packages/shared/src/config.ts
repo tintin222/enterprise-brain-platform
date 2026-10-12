@@ -28,6 +28,8 @@ export const baseConfigSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   STATE_DATABASE_URL: z.string().min(1),
   KEY_ENCRYPTION_KEY: hex32,
+  /** Where /healthz, /readyz and /metrics listen; each service has its own port setting. */
+  OPS_HOST: z.string().min(1).default('127.0.0.1'),
 });
 
 /** Settings for services that talk to the relay. */
@@ -35,11 +37,15 @@ export const relayConfigSchema = z.object({
   RELAY_HTTP_URL: z.url(),
   RELAY_WS_URL: z.string().regex(/^wss?:\/\//, 'must be a ws:// or wss:// URL'),
   READER_SECRET_KEY: hex32,
+  /** HTTP requests per second per key; the relay allows 1200 per minute per key (D20). */
+  RELAY_REQUESTS_PER_SECOND: z.coerce.number().positive().default(15),
 });
 
 /** Settings for services that talk to Mattermost. */
 export const chatConfigSchema = z.object({
   MM_URL: z.url(),
+  /** Mattermost API requests per second per token. */
+  MM_REQUESTS_PER_SECOND: z.coerce.number().positive().default(20),
 });
 
 export const secretKeySchema = hex32;

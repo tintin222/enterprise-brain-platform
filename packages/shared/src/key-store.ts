@@ -91,6 +91,33 @@ export class KeyStore {
     return pubkey;
   }
 
+  /**
+   * Re-encrypt every stored secret under a new master key (key rotation). Pass a transaction client so all
+   * secrets move together. Run it with every service stopped. Returns how many secrets moved.
+   */
+  async reencryptAll(newMasterKeyHex: string, tx: Queryable): Promise<number> {
+    const next = new KeyStore(tx, newMasterKeyHex);
+    const rows = await tx.query<SecretRow>('SELECT ref, nonce, ciphertext, auth_tag FROM identity.secrets ORDER BY ref FOR UPDATE');
+    for (const row of rows.rows) {
+      const sealed = next.encrypt(row.ref, this.decrypt(row));
+      await tx.query('UPDATE identity.secrets SET nonce = $2, ciphertext = $3, auth_tag = $4, key_version = key_version + 1 WHERE ref = $1', [row.ref, sealed.nonce, sealed.ciphertext, sealed.authTag]);
+    }
+    return rows.rows.length;
+  }
+
+  /** True when this master key opens the stored secrets (checked on one of them). */
+  async opensSecrets(db: Queryable = this.#db): Promise<boolean> {
+    const result = await db.query<SecretRow>('SELECT ref, nonce, ciphertext, auth_tag FROM identity.secrets LIMIT 1');
+    const row = result.rows[0];
+    if (!row) return true;
+    try {
+      this.decrypt(row);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** A signer for a stored Nostr key, looked up by pubkey. */
   async signerFor(pubkey: string): Promise<Signer> {
     const cached = this.#signers.get(pubkey);

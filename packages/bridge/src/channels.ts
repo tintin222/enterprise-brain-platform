@@ -27,6 +27,11 @@ export function backfillStream(mmChannelId: string): string {
   return `backfill:${mmChannelId}`;
 }
 
+/** Present while a channel's whole history must be replayed into a rebuilt relay. */
+export function rebuildStream(mmChannelId: string): string {
+  return `rebuild:${mmChannelId}`;
+}
+
 export interface ChannelServiceDeps {
   chat: ChatClient;
   relay: RelayClient;
@@ -63,8 +68,14 @@ export class ChannelService {
     const previous = await store.getChannel(mmChannelId);
     const relayChannelId = previous?.relayChannelId ?? relayChannelIdFor(mmChannelId);
     const metadata = channelMetadata(channel);
-    // An archived relay channel refuses every event, the create included.
-    if (previous?.state === 'archived') await this.#publish(buildArchiveEvent(relayChannelId, false, Date.now()));
+    // An archived relay channel refuses every event, the create included. (A rebuilt relay may not have the
+    // channel at all, which is fine: the create below makes it.)
+    if (previous?.state === 'archived') {
+      await this.#publish(buildArchiveEvent(relayChannelId, false, Date.now())).catch((error: unknown) => {
+        if (!(error instanceof RelayError) || error.retryable) throw error;
+        log.warn({ mmChannelId, ...errorFields(error) }, 'Could not unarchive the relay channel');
+      });
+    }
     const created = await this.#publish(buildCreateChannelEvent({ relayChannelId, ...metadata, nowMs: Date.now() }));
     const hash = metadataHash(metadata);
     // A relay channel that already existed may carry an older name, about text or visibility.

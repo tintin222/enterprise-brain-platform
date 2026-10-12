@@ -52,6 +52,7 @@ export class EchoAgent {
     const { relay, keyStore, readerSigner, agent, relayWsUrl, log } = this.#deps;
     this.#signer = await keyStore.signerFor(agent.nostrPubkey);
     const subscriber = new RelaySubscriber({
+      name: 'echo-agent',
       url: relayWsUrl,
       signer: readerSigner,
       log,

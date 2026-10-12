@@ -16,7 +16,7 @@ if (!agent) {
   process.exit(1);
 }
 const echo = new EchoAgent({
-  relay: new BuzzRelayClient(config.RELAY_HTTP_URL),
+  relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
   keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
   readerSigner: signerFromHex(config.READER_SECRET_KEY),
   agent,

@@ -1,5 +1,5 @@
 // Persistent job queue in Postgres (docs/agents-and-ingestion.md, A.3).
-import type { NostrEvent, Queryable } from '@brain/shared';
+import { metrics, type NostrEvent, type Queryable } from '@brain/shared';
 
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
@@ -55,6 +55,7 @@ export class JobStore {
        VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (agent_id, trigger_event_id) DO NOTHING RETURNING ${COLUMNS}`,
       [job.agentId, job.relayChannelId, job.threadRootId, job.triggerEvent.id, JSON.stringify(job.triggerEvent), status, error ?? null],
     );
+    if (r.rows[0] && status !== 'pending') metrics.jobs.inc({ outcome: status });
     return r.rows[0] ? toJob(r.rows[0]) : undefined;
   }
 
@@ -68,12 +69,18 @@ export class JobStore {
     return r.rows.map(toJob);
   }
 
+  async countOpen(): Promise<number> {
+    const r = await this.#db.query<{ n: number }>("SELECT count(*)::int AS n FROM runtime.jobs WHERE status IN ('pending', 'running')");
+    return r.rows[0]?.n ?? 0;
+  }
+
   async markRunning(id: number): Promise<number> {
     const r = await this.#db.query<{ attempts: number }>("UPDATE runtime.jobs SET status = 'running', attempts = attempts + 1, updated_at = now() WHERE id = $1 RETURNING attempts", [id]);
     return r.rows[0]?.attempts ?? 0;
   }
 
   async finish(id: number, status: JobStatus, fields: { replyEventId?: string; error?: string } = {}): Promise<void> {
+    if (status === 'done' || status === 'failed' || status === 'skipped') metrics.jobs.inc({ outcome: status });
     await this.#db.query('UPDATE runtime.jobs SET status = $2, reply_event_id = COALESCE($3, reply_event_id), error = $4, updated_at = now() WHERE id = $1', [
       id,
       status,

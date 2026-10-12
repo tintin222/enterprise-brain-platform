@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emojiForName, nameForEmoji } from './emoji.ts';
+import { neutralizeSpecialMentions } from './relay-to-mm.ts';
 import {
   buildArchiveEvent,
   buildChannelMetadataEvent,
@@ -172,5 +173,12 @@ describe('extractMentionUsernames', () => {
 
   it('deduplicates', () => {
     expect(extractMentionUsernames('@bob @bob @BOB')).toEqual(['bob']);
+  });
+});
+
+describe('neutralizeSpecialMentions', () => {
+  it('breaks @channel, @all and @here but leaves people and emails alone', () => {
+    expect(neutralizeSpecialMentions('@channel please see. cc @ALL and (@here)')).toBe('@\u200Bchannel please see. cc @\u200BALL and (@\u200Bhere)');
+    expect(neutralizeSpecialMentions('ask @alice, mail ops@channel.example, @channels-team')).toBe('ask @alice, mail ops@channel.example, @channels-team');
   });
 });

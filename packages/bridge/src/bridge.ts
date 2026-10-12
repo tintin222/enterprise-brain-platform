@@ -6,9 +6,11 @@ import {
   CoalescedTask,
   DistinctSigner,
   errorFields,
+  gaugeFrom,
   IDENTITY_MIGRATIONS_DIR,
   IdentityRepository,
   KeyedQueue,
+  metrics,
   migrate,
   nowSeconds,
   postFromEvent,
@@ -16,6 +18,7 @@ import {
   RelaySubscriber,
   retry,
   signerFromHex,
+  startOpsServer,
   tagValue,
   tagValues,
   type ChatClient,
@@ -27,12 +30,13 @@ import {
   type MmChannel,
   type MmPost,
   type NostrEvent,
+  type OpsServer,
   type Pool,
   type RecentEvents,
   type RelayClient,
   type Signer,
 } from '@brain/shared';
-import { backfillStream, ChannelService, cursorStream } from './channels.ts';
+import { backfillStream, ChannelService, cursorStream, rebuildStream } from './channels.ts';
 import type { BridgeConfig } from './config.ts';
 import { IdentityService } from './identities.ts';
 import { MmToRelay, type PostSource, type SyncOptions } from './mm-to-relay.ts';
@@ -96,6 +100,7 @@ export class Bridge {
   readonly #reconcile: CoalescedTask;
   #lastReport: ReconcileReport | undefined;
   readonly #reportedOutside = new Set<string>();
+  #ops: OpsServer | undefined;
 
   constructor(deps: BridgeDeps) {
     this.#deps = deps;
@@ -120,8 +125,18 @@ export class Bridge {
     return this.#services;
   }
 
-  async start(): Promise<void> {
-    const { pool, chat, relay, keyStore, log, config } = this.#deps;
+  /** The port of /healthz, /readyz and /metrics once started. */
+  get opsPort(): number | undefined {
+    return this.#ops?.port;
+  }
+
+  /**
+   * Apply migrations and build the mirroring services without connecting to anything live. `start()` calls
+   * it; tools such as dead-letter replay use it alone.
+   */
+  async prepare(): Promise<void> {
+    if (this.#services) return;
+    const { pool, chat, relay, keyStore, log } = this.#deps;
     await migrate(pool, 'identity', IDENTITY_MIGRATIONS_DIR);
     await migrate(pool, 'bridge', BRIDGE_MIGRATIONS_DIR);
     const me = await chat.getMe();
@@ -139,7 +154,8 @@ export class Bridge {
       log,
       completions: {
         post: async (row, tx) => {
-          await store.insertMessage({ relayEventId: row.relayEventId, mmPostId: row.mmPostId, origin: 'mm', mmChannelId: row.mmChannelId, authorMmUserId: row.authorMmUserId, mmEditAt: Number(row.meta.editAt ?? 0) }, tx);
+          const origin = row.meta.origin === 'relay' ? 'relay' : 'mm';
+          await store.insertMessage({ relayEventId: row.relayEventId, mmPostId: row.mmPostId, origin, mmChannelId: row.mmChannelId, authorMmUserId: row.authorMmUserId, mmEditAt: Number(row.meta.editAt ?? 0) }, tx);
         },
         edit: async (row, tx) => {
           const id = target(row.signedEvent);
@@ -164,11 +180,33 @@ export class Bridge {
     const mirror = new MmToRelay({ chat, relay, readerSigner: this.readerSigner, store, identities, channels, publisher, botUserId: me.id, bridgePubkey: this.bridgeSigner.pubkey, log });
     const relayToMm = new RelayToMm({ chat, store, identities, keyStore, relay, readerSigner: this.readerSigner, log });
     this.#services = { botUserId: me.id, identities, channels, mirror, relayToMm, publisher };
+  }
+
+  async start(): Promise<void> {
+    const { pool, chat, log, config } = this.#deps;
+    const store = this.store;
+    this.#ops = await startOpsServer({
+      host: config.OPS_HOST,
+      port: config.BRIDGE_OPS_PORT,
+      log,
+      checks: [
+        { name: 'database', check: async () => (await pool.query('SELECT 1')).rowCount === 1 },
+        { name: 'mattermost', check: () => this.#events?.connected ?? false },
+        { name: 'relay', check: () => this.#subscriber?.connected ?? false },
+      ],
+    });
+    gaugeFrom('brain_bridge_outbox_rows', 'Signed events waiting for the relay', () => store.countOutbox());
+    gaugeFrom('brain_bridge_active_channels', 'Agent-enabled channels', async () => (await store.listChannels('active')).length);
+    gaugeFrom('brain_bridge_dead_letters_open', 'Dead letters not yet replayed', () => store.countDeadLetters());
+    gaugeFrom('brain_bridge_relay_subscriptions', 'Relay subscriptions the relay confirmed', () => this.#subscriber?.activeCount ?? 0);
+    await this.prepare();
+    const { publisher } = this.services;
 
     await publisher.drain();
     this.#subscriber = new RelaySubscriber({
       url: config.RELAY_WS_URL,
       signer: this.readerSigner,
+      name: 'bridge',
       log,
       onEvent: (key, event) => {
         this.#onRelayEvent(key, event).catch((error: unknown) => log.error({ relayEventId: event.id, ...errorFields(error) }, 'Relay event handling failed'));
@@ -204,7 +242,7 @@ export class Bridge {
       setInterval(() => void this.#reconcile.run(), config.RECONCILE_INTERVAL_SECONDS * 1000),
     );
     void this.#reconcile.run();
-    log.info({ botUserId: me.id }, 'Bridge started');
+    log.info({ botUserId: this.services.botUserId }, 'Bridge started');
   }
 
   async stop(): Promise<void> {
@@ -216,6 +254,7 @@ export class Bridge {
     this.#subscriber?.close();
     await Promise.all([this.#relayCatchUp.idle(), this.#reconcile.idle()]);
     await this.#queue.idle();
+    await this.#ops?.close();
     this.#deps.log.info('Bridge stopped');
   }
 
@@ -362,9 +401,13 @@ export class Bridge {
         attempts: 3,
         baseMs: 1000,
         maxMs: 10_000,
-        onRetry: (error, attempt) => this.#deps.log.warn({ ...payload, attempt, ...errorFields(error) }, 'Mirroring to the relay failed; retrying'),
+        onRetry: (error, attempt) => {
+          metrics.bridgeRetries.inc({ direction: 'mm_to_relay' });
+          this.#deps.log.warn({ ...payload, attempt, ...errorFields(error) }, 'Mirroring to the relay failed; retrying');
+        },
       });
     } catch (error) {
+      metrics.deadLetters.inc({ direction: 'mm_to_relay' });
       this.#deps.log.error({ ...payload, ...errorFields(error) }, 'Mirroring to the relay failed; dead-lettering');
       await this.store.deadLetter('mm_to_relay', payload, error instanceof Error ? error.message : String(error), 3);
     }
@@ -396,9 +439,13 @@ export class Bridge {
         attempts: 3,
         baseMs: 1000,
         maxMs: 10_000,
-        onRetry: (error, attempt) => this.#deps.log.warn({ relayEventId: event.id, attempt, ...errorFields(error) }, 'Mirroring a relay event failed; retrying'),
+        onRetry: (error, attempt) => {
+          metrics.bridgeRetries.inc({ direction: 'relay_to_mm' });
+          this.#deps.log.warn({ relayEventId: event.id, attempt, ...errorFields(error) }, 'Mirroring a relay event failed; retrying');
+        },
       });
     } catch (error) {
+      metrics.deadLetters.inc({ direction: 'relay_to_mm' });
       this.#deps.log.error({ relayEventId: event.id, ...errorFields(error) }, 'Mirroring a relay event failed; dead-lettering');
       await this.store.deadLetter('relay_to_mm', { relayChannelId: channel.relayChannelId, event }, error instanceof Error ? error.message : String(error), 3);
     }
@@ -431,14 +478,16 @@ export class Bridge {
 
   /**
    * Mirror the last BACKFILL_DAYS before enablement as history (tagged `backfill`, so agents never answer
-   * it). Runs in the channel's queue, before live events. A marker records the finished enablement.
+   * it), with its reactions. Runs in the channel's queue, before live events. A marker records the finished
+   * enablement. After a relay rebuild the whole history is replayed, agents' messages included.
    */
   async #backfill(row: ChannelRow): Promise<void> {
     const days = this.#deps.config.BACKFILL_DAYS;
-    if (days === 0 || this.#stopped) return;
+    const rebuild = (await this.store.getCursor(rebuildStream(row.mmChannelId))) !== undefined;
+    if ((days === 0 && !rebuild) || this.#stopped) return;
     const enabledAt = row.enabledAt.getTime();
-    if (((await this.store.getCursor(backfillStream(row.mmChannelId))) ?? 0) >= enabledAt) return;
-    const cutoff = enabledAt - days * 86_400_000;
+    if (!rebuild && ((await this.store.getCursor(backfillStream(row.mmChannelId))) ?? 0) >= enabledAt) return;
+    const cutoff = rebuild ? 0 : enabledAt - days * 86_400_000;
     const history = new Map<string, MmPost>();
     for (let page = 0; ; page++) {
       const list = await this.#deps.chat.getChannelPostsPage(row.mmChannelId, page, BACKFILL_PAGE_SIZE);
@@ -448,9 +497,10 @@ export class Bridge {
       if (posts.length < BACKFILL_PAGE_SIZE || !oldest || oldest.create_at < cutoff) break;
     }
     const ordered = [...history.values()].sort((a, b) => a.create_at - b.create_at);
-    for (const post of ordered) await this.#processPost(post, 'backfill');
+    for (const post of ordered) await this.#processPost(post, 'backfill', { reactions: post.has_reactions ? post.metadata?.reactions : [], rebuild });
     await this.store.setCursor(backfillStream(row.mmChannelId), enabledAt);
-    this.#deps.log.info({ mmChannelId: row.mmChannelId, posts: ordered.length, days }, 'Backfill finished');
+    if (rebuild) await this.store.deleteCursor(rebuildStream(row.mmChannelId));
+    this.#deps.log.info({ mmChannelId: row.mmChannelId, posts: ordered.length, days, rebuild }, 'Backfill finished');
   }
 
   /** Re-read agents' relay events since the cursor minus the overlap window, across all channels at once. */
@@ -487,6 +537,64 @@ export class Bridge {
     if (!target) return undefined;
     const mapped = (await this.store.getMessageByEvent(target)) ?? (await this.store.getReactionByEvent(target));
     return mapped ? channels.find((channel) => channel.mmChannelId === mapped.mmChannelId) : undefined;
+  }
+
+  /**
+   * Replay one dead letter. A relay event is handled again. A signed event from the outbox is published
+   * again through its completion; if the relay refuses it now (for example its created_at is too old), the
+   * post or its reactions are mirrored again from Mattermost. Every path is idempotent.
+   */
+  async replayDeadLetter(id: number): Promise<'replayed' | 'not needed: the channel is not mirrored now' | 'not found' | 'already replayed'> {
+    await this.prepare();
+    const row = await this.store.getDeadLetter(id);
+    if (!row) return 'not found';
+    if (row.replayedAt) return 'already replayed';
+    try {
+      const done = await this.#replay(row.direction, row.payload);
+      await this.store.recordReplay(id);
+      return done ? 'replayed' : 'not needed: the channel is not mirrored now';
+    } catch (error) {
+      await this.store.recordReplay(id, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  /** Returns false when there was nothing to do because the channel is not mirrored any more. */
+  async #replay(direction: string, payload: Record<string, unknown>): Promise<boolean> {
+    const { mirror, relayToMm, publisher } = this.services;
+    if (direction === 'relay_to_mm') {
+      const channel = await this.store.getChannelByRelayId(String(payload.relayChannelId));
+      if (channel?.state !== 'active') return false;
+      await relayToMm.handle(channel, payload.event as NostrEvent);
+      return true;
+    }
+    if ((await this.store.getChannel(String(payload.mmChannelId)))?.state !== 'active') return false;
+    const mmPostId = typeof payload.mmPostId === 'string' ? payload.mmPostId : undefined;
+    const event = payload.event as NostrEvent | undefined;
+    // The relay accepts created_at within 900 s of its clock (spike A5); an older event cannot be resent.
+    const fresh = event !== undefined && Math.abs(nowSeconds() - event.created_at) < 800;
+    if (event && fresh && typeof payload.purpose === 'string' && typeof payload.authorMmUserId === 'string') {
+      const row = {
+        relayEventId: event.id,
+        purpose: payload.purpose,
+        mmPostId: mmPostId ?? null,
+        mmChannelId: String(payload.mmChannelId),
+        authorMmUserId: payload.authorMmUserId,
+        signedEvent: event,
+        meta: (payload.meta as Record<string, unknown> | undefined) ?? {},
+      };
+      if (await publisher.publish(row, { deadLetter: false })) return true;
+    }
+    // Mirror again from Mattermost's current state.
+    if (!mmPostId) throw new Error('Nothing to replay: no event and no post');
+    if (payload.step === 'reactions' || payload.purpose === 'reaction' || payload.purpose === 'unreaction') {
+      await mirror.syncReactions(mmPostId);
+      return true;
+    }
+    const post = await this.#deps.chat.getPost(mmPostId);
+    if (!post) throw new Error(`Post ${mmPostId} is gone from Mattermost`);
+    await mirror.syncPost(post, 'posted', { deleted: post.delete_at !== 0 });
+    return true;
   }
 
   /** Run reconciliation now (it also runs every RECONCILE_INTERVAL_SECONDS); resolves with its report. */

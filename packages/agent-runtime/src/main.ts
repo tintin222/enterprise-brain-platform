@@ -14,7 +14,7 @@ await brain.init();
 const runtime = new AgentRuntime({
   config,
   pool,
-  relay: new BuzzRelayClient(config.RELAY_HTTP_URL),
+  relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }),
   keyStore: new KeyStore(pool, config.KEY_ENCRYPTION_KEY),
   brain,
   providerFor: providersFromConfig(config),

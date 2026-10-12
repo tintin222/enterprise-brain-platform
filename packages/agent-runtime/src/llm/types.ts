@@ -29,10 +29,17 @@ export interface Usage {
   outputTokens: number;
 }
 
+/** The channel a reply goes to. Members can edit both fields, so they are data, never instructions. */
+export interface ChannelContext {
+  name: string;
+  about: string;
+}
+
 export interface GenerateInput {
   model: string;
   /** The agent's standing instructions (system prompt), from the registry only. */
   instructions: string;
+  channel?: ChannelContext;
   /** Untrusted chat content, oldest first; the last turn is the message to answer. */
   conversation: ConversationTurn[];
   knowledge: RetrievedPassage[];

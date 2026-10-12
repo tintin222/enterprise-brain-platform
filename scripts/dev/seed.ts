@@ -43,8 +43,10 @@ if (!me.roles.split(' ').includes('system_admin')) throw new Error(`@${adminUser
 
 await admin.put('/config/patch', {
   ServiceSettings: { EnableBotAccountCreation: true, EnableUserAccessTokens: true },
+  // Mattermost's default allows 50 members per team; a workspace at Q7 scale has 500 people in one team.
+  TeamSettings: { MaxUsersPerTeam: 10000 },
 });
-console.log('Enabled bot accounts and user access tokens');
+console.log('Enabled bot accounts and user access tokens; allowed 10,000 members per team');
 
 // --- Team and people ---
 let team = await admin.find<{ id: string }>(`/teams/name/${teamName}`);

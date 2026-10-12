@@ -40,7 +40,7 @@ export class AnthropicProvider implements LlmProvider {
       fallbacks: 'default',
       output_config: { effort: this.#effort },
       system: [{ type: 'text', text: input.instructions, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: userMessage(input.conversation, input.knowledge) }],
+      messages: [{ role: 'user', content: userMessage(input.conversation, input.knowledge, input.channel) }],
     });
     const usage = { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens };
     if (response.stop_reason === 'refusal') return { text: '', usage, refused: true };

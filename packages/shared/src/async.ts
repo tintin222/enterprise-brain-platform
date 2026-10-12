@@ -130,3 +130,47 @@ export class CoalescedTask {
     await this.#current;
   }
 }
+
+/**
+ * A token bucket per key: at most `ratePerSecond` acquisitions per second on average, bursts up to `burst`.
+ * Waiters for one key are served in order. Used to stay under the relay's per-key limit (D20) and to pace
+ * Mattermost writes.
+ */
+export class RateLimiter {
+  readonly #rate: number;
+  readonly #burst: number;
+  readonly #buckets = new Map<string, { tokens: number; at: number }>();
+  readonly #tails = new Map<string, Promise<void>>();
+
+  constructor(ratePerSecond: number, burst = Math.max(1, Math.ceil(ratePerSecond))) {
+    this.#rate = ratePerSecond;
+    this.#burst = burst;
+  }
+
+  /** Resolves when the caller may proceed; returns how long it waited (ms). */
+  acquire(key = ''): Promise<number> {
+    const started = Date.now();
+    const turn = (this.#tails.get(key) ?? Promise.resolve()).then(() => this.#take(key));
+    const tail = turn.catch(() => undefined);
+    this.#tails.set(key, tail);
+    void tail.then(() => {
+      if (this.#tails.get(key) === tail) this.#tails.delete(key);
+    });
+    return turn.then(() => Date.now() - started);
+  }
+
+  async #take(key: string): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      const bucket = this.#buckets.get(key) ?? { tokens: this.#burst, at: now };
+      bucket.tokens = Math.min(this.#burst, bucket.tokens + ((now - bucket.at) / 1000) * this.#rate);
+      bucket.at = now;
+      this.#buckets.set(key, bucket);
+      if (bucket.tokens >= 1) {
+        bucket.tokens -= 1;
+        return;
+      }
+      await sleep(Math.ceil(((1 - bucket.tokens) / this.#rate) * 1000));
+    }
+  }
+}

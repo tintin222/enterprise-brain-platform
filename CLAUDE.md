@@ -21,7 +21,9 @@ We do not modify Mattermost or Buzz source code in this repository. Both run as 
 | `docs/bridge-spec.md` | Before touching `packages/bridge`. Event mapping, state tables, loop prevention. |
 | `docs/agents-and-ingestion.md` | Before touching `packages/agent-runtime` or `packages/ingestion`. |
 | `docs/decisions.md` | Before making a design choice, and whenever upstream behaviour matters. Holds decisions, verified facts, the assumptions A1..A12 with their Phase 0 results, and the owner's questions Q1..Q14 with their answers. |
-| `docs/spike-findings.md` | Always, once per session. Results of testing each assumption against the live local stack (Phase 0). This file overrides the specs where they disagree. |
+| `docs/spike-findings.md` | Always, once per session. Results of testing each assumption against the live local stack (Phase 0), plus what later phases found. This file overrides the specs where they disagree. |
+| `docs/operations.md` | Before running, monitoring or repairing the services: endpoints, metrics, throttles, dead letters, key rotation, relay rebuild. |
+| `docs/security-review.md`, `docs/load-test.md` | When touching the prompt path or retrieval scope, or performance limits. |
 
 ## Rules
 
@@ -42,22 +44,27 @@ TypeScript on the current Node LTS, pnpm workspaces, Postgres for our state, Doc
 
 Pinned toolchain (D13 in `docs/decisions.md`): Node 24.21.0, which pnpm downloads and uses for every `pnpm` script (`devEngines.runtime`), so the machine's global Node does not matter; pnpm 12.9.1 (`packageManager`); TypeScript 6.0.3 (not 7, which typescript-eslint does not support yet); ESLint 10 with type-aware typescript-eslint; vitest 5; scripts run with tsx. Workspace packages export their TypeScript source directly; there is no build step yet. Relative imports carry the `.ts` extension.
 
-## Repository layout (target)
+## Repository layout
 
 ```
 CLAUDE.md
 docs/
 infra/                 Docker Compose for the local stack (Mattermost, Buzz relay, databases)
+  mostlymatter/        image with the uncapped Mostlymatter build (compose.mostlymatter.yml selects it)
   third_party/buzz/    licence and notice for the compose services adapted from Buzz
 packages/
-  shared/              config, logging, types, ChatClient, RelayClient, key store
-  bridge/              Mattermost <-> Buzz mirror
+  shared/              config, logging, metrics, types, ChatClient, RelayClient, key store, local brain
+  bridge/              Mattermost <-> Buzz mirror, dead-letter tool (third_party/: emoji-datasource notice)
   agent-runtime/       agent registry, dispatcher, context assembly, LLM calls
-  ingestion/           relay -> brain indexing
+  ingestion/           relay -> brain indexing, purge tool
 scripts/
   lib/                 env file, Mattermost and relay helpers for scripts
   dev/                 dev:up, dev:down, dev:seed
   spike/               one spike per assumption plus the Phase 0 acceptance checks
+  gen/                 generated sources (emoji table)
+  keys/                key rotation
+  ops/                 relay wipe and rebuild, log secret check
+  load/                Phase 6 load test
 e2e/                   end-to-end tests against the local stack
 ```
 
@@ -69,7 +76,7 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm dev:up` | Create `.env` from `.env.example` if needed (generates service keys and secrets, never overwrites existing values), then start the stack and wait until it is healthy. Mattermost on `localhost:8065`, relay on `localhost:3000`, our Postgres on `localhost:5433`. |
+| `pnpm dev:up [--mostlymatter \| --team-edition]` | Create `.env` from `.env.example` if needed (generates service keys and secrets, never overwrites existing values), then start the stack and wait until it is healthy. Mattermost on `localhost:8065`, relay on `localhost:3000`, our Postgres on `localhost:5433`. `--mostlymatter` switches to the uncapped Mostlymatter build (needs `docker-buildx`), `--team-edition` back. |
 | `pnpm dev:down` | Stop the stack and keep its data. `pnpm dev:down --wipe` also deletes every volume and `.env`. |
 | `pnpm dev:seed` | Idempotent. Mattermost: enable bot accounts and access tokens, create team `brain-dev`, `sysadmin`, `alice`, `bob` and the `@brain` bot (system admin), and write `MM_BRIDGE_TOKEN` and `MM_ADMIN_TOKEN` (for agent provisioning, D25) to `.env`. Relay: make the reader key a member. Agents are created with `pnpm agent:provision`. |
 | `pnpm bridge` | Run the bridge against the local stack (Ctrl-C stops it cleanly) |
@@ -79,10 +86,15 @@ Prerequisites: a Docker engine with Compose v2 (this machine uses Colima: `colim
 | `pnpm ingestion` | Run ingestion, which keeps the local brain (D34) in step with the relay; agents search it |
 | `pnpm ingest:purge --channel <relay channel id> \| --author <pubkey>` | Remove a channel's or an author's content from the brain and keep it out |
 | `pnpm spike [id ...]` | Run spikes (`A1`..`A12`, `X1`, `acceptance-relay`, `acceptance-mm`) against the stack; evidence goes to `scripts/spike/results/` (not committed). `X2` creates about 250 Mattermost users, so it runs only when named. |
+| `pnpm dead-letter list \| show <id> \| replay <id...> \| replay --all` | Inspect and replay what the bridge gave up on (docs/operations.md section 3) |
+| `pnpm keys:rotate-master`, `keys:rotate-reader [--finish]`, `keys:rotate-bridge [--finish]` | Rotate the master key, the reader key or the bridge key (docs/operations.md section 4) |
+| `pnpm relay:wipe --yes`, `pnpm relay:rebuild` | Empty the local relay; prepare our services to rebuild it from Mattermost (docs/operations.md section 5) |
+| `pnpm check:logs <files>` | Fail if any secret from `.env` or the key store appears in log files |
+| `pnpm load-test` | The Phase 6 load test at Q7 scale, on Mostlymatter with the three services running (docs/load-test.md) |
 | `pnpm gen:emoji` | Regenerate the bridge's reaction emoji table from the pinned emoji-datasource (D31) |
 | `pnpm typecheck` / `pnpm lint` | Static checks |
 | `pnpm test` | Unit tests (no services needed) |
-| `pnpm test:e2e` | End-to-end tests (needs `pnpm dev:up && pnpm dev:seed`) |
+| `pnpm test:e2e` | End-to-end tests (needs `pnpm dev:up && pnpm dev:seed`). Real-model tests run when `ANTHROPIC_API_KEY` is set; the relay rebuild drill runs with `E2E_RELAY_DRILL=1` (it wipes the local relay). |
 
 ## Definition of done
 

@@ -17,6 +17,8 @@ export const runtimeConfigSchema = z.object({
   LLM_MODEL: z.string().min(1).default('claude-opus-5-5'),
   LLM_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
   LLM_MAX_TOKENS: z.coerce.number().int().min(256).default(16_000),
+  /** /healthz, /readyz and /metrics (0 picks a free port). */
+  RUNTIME_OPS_PORT: z.coerce.number().int().min(0).max(65535).default(9102),
 });
 
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;

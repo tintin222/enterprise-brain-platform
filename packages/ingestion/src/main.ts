@@ -10,7 +10,7 @@ const pool = createPool(config.STATE_DATABASE_URL);
 // The local brain (D34) until the enterprise brain has an API (Q3).
 const brain = new PostgresBrainClient(pool);
 await brain.init();
-const ingestion = new Ingestion({ config, pool, relay: new BuzzRelayClient(config.RELAY_HTTP_URL), brain, log });
+const ingestion = new Ingestion({ config, pool, relay: new BuzzRelayClient(config.RELAY_HTTP_URL, { perKeyPerSecond: config.RELAY_REQUESTS_PER_SECOND }), brain, log });
 
 let stopping = false;
 const shutdown = (signal: string): void => {

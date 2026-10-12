@@ -6,8 +6,11 @@ import {
   ChannelWatcher,
   CoalescedTask,
   errorFields,
+  gaugeFrom,
   IDENTITY_MIGRATIONS_DIR,
   KeyedQueue,
+  messageTimeMs,
+  metrics,
   migrate,
   isThreadDoc,
   nowSeconds,
@@ -15,12 +18,14 @@ import {
   RelaySession,
   RelaySubscriber,
   signerFromHex,
+  startOpsServer,
   tagValue,
   threadRoot,
   type BrainClient,
   type KeyStore,
   type Logger,
   type NostrEvent,
+  type OpsServer,
   type Pool,
   type RelayClient,
   type Signer,
@@ -79,6 +84,7 @@ export class AgentRuntime {
   #watcher: ChannelWatcher | undefined;
   #refreshTimer: NodeJS.Timeout | undefined;
   #stopped = false;
+  #ops: OpsServer | undefined;
   readonly #catchUp: CoalescedTask;
 
   constructor(deps: AgentRuntimeDeps) {
@@ -97,8 +103,24 @@ export class AgentRuntime {
     return this.#jobs;
   }
 
+  /** The port of /healthz, /readyz and /metrics once started. */
+  get opsPort(): number | undefined {
+    return this.#ops?.port;
+  }
+
   async start(): Promise<void> {
     const { pool, relay, config, log } = this.#deps;
+    this.#ops = await startOpsServer({
+      host: config.OPS_HOST,
+      port: config.RUNTIME_OPS_PORT,
+      log,
+      checks: [
+        { name: 'database', check: async () => (await pool.query('SELECT 1')).rowCount === 1 },
+        { name: 'relay', check: () => this.#subscriber?.connected ?? false },
+      ],
+    });
+    gaugeFrom('brain_runtime_open_jobs', 'Agent jobs pending or running', () => this.#jobs.countOpen());
+    gaugeFrom('brain_runtime_relay_subscriptions', 'Relay subscriptions the relay confirmed', () => this.#subscriber?.activeCount ?? 0);
     await migrate(pool, 'identity', IDENTITY_MIGRATIONS_DIR);
     await migrate(pool, 'runtime', RUNTIME_MIGRATIONS_DIR);
     await this.refreshAgents();
@@ -107,6 +129,7 @@ export class AgentRuntime {
     const subscriber = new RelaySubscriber({
       url: config.RELAY_WS_URL,
       signer: this.#reader,
+      name: 'agent-runtime',
       log,
       onEvent: (key, event) => {
         if (key === this.#watcher?.key) this.#watcher.handle(event);
@@ -144,6 +167,7 @@ export class AgentRuntime {
     this.#subscriber?.close();
     await this.#channelQueue.idle();
     await this.#threadQueue.idle();
+    await this.#ops?.close();
   }
 
   async refreshAgents(): Promise<void> {
@@ -204,7 +228,10 @@ export class AgentRuntime {
       nowSeconds: nowSeconds(),
       maxEventAgeSeconds: config.MAX_EVENT_AGE_SECONDS,
     });
-    for (const { agent, reason } of result.skipped) log.info({ agent: agent.handle, eventId: event.id, reason }, 'Not answering');
+    for (const { agent, reason } of result.skipped) {
+      metrics.triggerSkips.inc({ reason });
+      log.info({ agent: agent.handle, eventId: event.id, reason }, 'Not answering');
+    }
     for (const agent of result.triggered) await this.#enqueue(agent, channelId, event);
   }
 
@@ -261,6 +288,7 @@ export class AgentRuntime {
       const reply = signer.sign(this.#reply(agent, job, text));
       await relay.publish(reply, signer);
       await this.#jobs.finish(job.id, 'done', { replyEventId: reply.id });
+      metrics.jobLatency.observe(Math.max(0, Date.now() - messageTimeMs(job.triggerEvent)) / 1000);
       log.info({ agent: agent.handle, trigger: job.triggerEventId, reply: reply.id }, 'Replied');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -308,11 +336,14 @@ export class AgentRuntime {
     const knowledge = found.filter((passage) => !isThreadDoc(passage.id, job.relayChannelId, job.threadRootId)).slice(0, KNOWLEDGE_LIMIT);
     const result = await this.#deps.providerFor(agent).generate({
       model: agent.model || config.LLM_MODEL,
-      instructions: systemPrompt({ agentName: agent.displayName, channelName: channel.name, channelAbout: channel.about, instructions: agent.instructions }),
+      instructions: systemPrompt({ agentName: agent.displayName, instructions: agent.instructions }),
+      channel,
       conversation,
       knowledge,
       tools: [],
     });
+    metrics.llmTokens.inc({ direction: 'input' }, result.usage.inputTokens);
+    metrics.llmTokens.inc({ direction: 'output' }, result.usage.outputTokens);
     if (result.refused) return DECLINED;
     if (!result.text) throw new Error('The model returned no text');
     return result.text;
